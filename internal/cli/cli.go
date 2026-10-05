@@ -9,11 +9,10 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/noi/dwbt/action"
-	"github.com/noi/dwbt/internal/check"
 	"github.com/noi/dwbt/internal/def"
+	"github.com/noi/dwbt/internal/engine"
 	"github.com/noi/dwbt/internal/runner"
 )
 
@@ -67,11 +66,11 @@ func (a *App) validate(args []string) int {
 	if err != nil {
 		return ExitError
 	}
-	proj, wfs, ok := a.load(paths)
+	plan, ok := a.load(paths)
 	if !ok {
 		return ExitError
 	}
-	fmt.Fprintf(a.Stdout, "ok: %d workflow(s), %d action(s)\n", len(wfs), len(proj.Actions))
+	fmt.Fprintf(a.Stdout, "ok: %d workflow(s), %d action(s)\n", len(plan.Workflows), len(plan.Project.Actions))
 	return ExitOK
 }
 
@@ -84,30 +83,29 @@ func (a *App) run(ctx context.Context, args []string) int {
 	if err != nil {
 		return ExitError
 	}
-	proj, wfs, ok := a.load(paths)
+	plan, ok := a.load(paths)
 	if !ok {
 		return ExitError
 	}
-	env := environ(a.Environ)
-	rt, err := newRuntime(proj.Config, *envName, overrides, env)
+	r, err := plan.Runner(engine.RunOptions{
+		Env:          *envName,
+		Servers:      overrides,
+		Environ:      a.Environ,
+		OverrideHint: "--server %[1]s=<url>",
+	})
 	if err != nil {
 		fmt.Fprintf(a.Stderr, "error: %v\n", err)
 		return ExitError
 	}
 
-	r := &runner.Runner{
-		Resolver: def.Resolver{Presets: a.Presets, Files: proj.Actions},
-		Runtime:  rt,
-		Env:      env,
-	}
 	var counts [4]int
-	for _, wf := range wfs {
+	for _, wf := range plan.Workflows {
 		res := r.Run(ctx, wf)
 		counts[res.Status]++
 		a.report(res)
 	}
 	fmt.Fprintf(a.Stdout, "\n%d workflow(s): %d passed, %d failed, %d errored\n",
-		len(wfs), counts[runner.Passed], counts[runner.Failed], counts[runner.Errored])
+		len(plan.Workflows), counts[runner.Passed], counts[runner.Failed], counts[runner.Errored])
 	switch {
 	case counts[runner.Errored] > 0:
 		return ExitError
@@ -118,56 +116,33 @@ func (a *App) run(ctx context.Context, args []string) int {
 }
 
 // load loads the project and the workflows, and validates them.
-func (a *App) load(paths []string) (*def.Project, []*def.Workflow, bool) {
+func (a *App) load(paths []string) (*engine.Plan, bool) {
 	root, err := def.FindRoot(a.Dir)
 	if err != nil {
 		fmt.Fprintf(a.Stderr, "error: %v\n", err)
-		return nil, nil, false
+		return nil, false
 	}
-	var errs def.Errors
-	proj, err := def.Load(root, a.Dir)
-	if proj == nil {
-		fmt.Fprintf(a.Stderr, "error: %v\n", err)
-		return nil, nil, false
+	var files []string
+	for _, p := range paths {
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(a.Dir, p)
+		}
+		p, _ = filepath.Abs(p)
+		files = append(files, p)
 	}
-	errs = appendErr(errs, err)
-	for _, w := range proj.Warnings {
-		fmt.Fprintf(a.Stderr, "warning: %s\n", w)
-	}
-
-	files := proj.WorkflowFiles
-	if len(paths) > 0 {
-		files = nil
-		for _, p := range paths {
-			if !filepath.IsAbs(p) {
-				p = filepath.Join(a.Dir, p)
-			}
-			p, _ = filepath.Abs(p)
-			files = append(files, p)
+	plan, err := engine.Load(root, a.Dir, files, a.Presets)
+	if plan != nil {
+		for _, w := range plan.Project.Warnings {
+			fmt.Fprintf(a.Stderr, "warning: %s\n", w)
 		}
 	}
-	if len(files) == 0 && len(errs) == 0 {
-		fmt.Fprintf(a.Stderr, "error: no workflows found in %s\n", filepath.Join(root, "workflows"))
-		return nil, nil, false
-	}
-	var wfs []*def.Workflow
-	for _, f := range files {
-		wf, err := proj.LoadWorkflow(f)
-		errs = appendErr(errs, err)
-		if wf != nil && err == nil {
-			wfs = append(wfs, wf)
-		}
-	}
-	if len(errs) == 0 {
-		errs = appendErr(errs, check.Check(proj, a.Presets, wfs))
-	}
-	if len(errs) > 0 {
-		for _, e := range errs {
+	if err != nil {
+		for _, e := range engine.Errors(err) {
 			fmt.Fprintf(a.Stderr, "error: %v\n", e)
 		}
-		return nil, nil, false
+		return nil, false
 	}
-	return proj, wfs, true
+	return plan, true
 }
 
 func (a *App) report(res *runner.Result) {
@@ -176,19 +151,8 @@ func (a *App) report(res *runner.Result) {
 		title += " - " + res.Workflow.Description
 	}
 	fmt.Fprintf(a.Stdout, "=== %s\n", title)
-	for _, s := range res.Steps {
-		if s.Status == runner.Skipped {
-			fmt.Fprintf(a.Stdout, "  %-5s %s\n", s.Status, s.Step.Label())
-			continue
-		}
-		fmt.Fprintf(a.Stdout, "  %-5s %s  %s\n", s.Status, s.Step.Label(), duration(s.Duration))
-		if s.Err != nil {
-			for _, line := range strings.Split(s.Err.Error(), "\n") {
-				fmt.Fprintf(a.Stdout, "        %s\n", line)
-			}
-		}
-	}
-	fmt.Fprintf(a.Stdout, "--- %s %s (%s)\n", res.Status, res.Workflow.Name, duration(res.Duration))
+	engine.WriteSteps(a.Stdout, res)
+	fmt.Fprintf(a.Stdout, "--- %s %s (%s)\n", res.Status, res.Workflow.Name, engine.Duration(res.Duration))
 }
 
 func (a *App) flagSet(name string) *flag.FlagSet {
@@ -229,32 +193,4 @@ func (s serverFlags) Set(v string) error {
 	}
 	s[id] = url
 	return nil
-}
-
-func environ(kvs []string) map[string]any {
-	env := map[string]any{}
-	for _, kv := range kvs {
-		if k, v, ok := strings.Cut(kv, "="); ok {
-			env[k] = v
-		}
-	}
-	return env
-}
-
-func appendErr(errs def.Errors, err error) def.Errors {
-	if err == nil {
-		return errs
-	}
-	var list def.Errors
-	if errors.As(err, &list) {
-		return append(errs, list...)
-	}
-	return append(errs, err)
-}
-
-func duration(d time.Duration) string {
-	if d < time.Millisecond {
-		return d.Round(time.Microsecond).String()
-	}
-	return d.Round(time.Millisecond).String()
 }

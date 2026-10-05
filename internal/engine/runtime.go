@@ -1,6 +1,7 @@
-package cli
+package engine
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -17,6 +18,8 @@ type runtime struct {
 	env     string
 	servers map[string]server
 	timeout time.Duration
+	// hint tells how to override the URL of a server; see RunOptions.
+	hint string
 }
 
 type server struct {
@@ -24,9 +27,9 @@ type server struct {
 	err error
 }
 
-// newRuntime resolves the server URLs. A server given with --server takes
-// precedence over the profile selected with --env, which takes precedence
-// over the default profile.
+// newRuntime resolves the server URLs. A server in overrides takes
+// precedence over the profile envName, which takes precedence over the
+// default profile.
 func newRuntime(cfg *def.Config, envName string, overrides map[string]string, env map[string]any) (*runtime, error) {
 	rt := &runtime{servers: map[string]server{}, timeout: cfg.HTTPTimeout}
 	if envName != "" && cfg.Environments[envName] == nil {
@@ -77,7 +80,11 @@ func (rt *runtime) Server(id string) (string, error) {
 	s, ok := rt.servers[id]
 	if !ok {
 		if rt.env == "" {
-			return "", fmt.Errorf("server %q is not defined; set it in config.yaml or with --server %s=<url>", id, id)
+			msg := fmt.Sprintf("server %q is not defined; set it in config.yaml", id)
+			if rt.hint != "" {
+				msg += " or override it with " + fmt.Sprintf(rt.hint, id)
+			}
+			return "", errors.New(msg)
 		}
 		return "", fmt.Errorf("server %q is not defined in environment %q", id, rt.env)
 	}
