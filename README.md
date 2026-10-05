@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-**D**efined **W**orkflow **B**ased **T**ests — pronounced "doubt" (ダウト)
+**D**efined **W**orkflow **B**ased **T**ests — pronounced "doubt"
 
 dwbt is a tool for writing E2E tests as YAML workflows and running them.
 
