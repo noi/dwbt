@@ -1,0 +1,14 @@
+description: ユーザーをフォローする
+params:
+  follower: number
+  followee: number
+steps:
+  - use: http
+    params:
+      server: api
+      method: POST
+      path: /api/users/<<params.followee>>/followers
+      json:
+        user_id: <<params.follower>>
+    expects:
+      - status: 204
