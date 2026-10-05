@@ -1,0 +1,20 @@
+description: 不正なリクエストはエラーになる
+steps:
+  - use: http
+    params:
+      server: api
+      method: POST
+      path: /api/users
+      json:
+        name: ""
+        age: -1
+    expects:
+      - status: 400
+
+  - use: http
+    params:
+      server: api
+      method: GET
+      path: /api/users/999/followers
+    expects:
+      - status: 404

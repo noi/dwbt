@@ -1,0 +1,29 @@
+description: ユーザーをフォローできる
+steps:
+  - id: prepare
+    use: user/create
+    foreach: [{ name: a, age: 18 }, { name: b, age: 19 }]
+    params:
+      name: <<item.name>>
+      age: <<item.age>>
+    outputs:
+      users: <<outputs.current.user>>
+
+  - use: user/follow
+    inputs:
+      users: <<outputs.prepare.users>>
+    params:
+      follower: <<inputs.users[0].id>>
+      followee: <<inputs.users[1].id>>
+
+  - use: http
+    inputs:
+      users: <<outputs.prepare.users>>
+    params:
+      server: api
+      method: GET
+      path: /api/users/<<inputs.users[1].id>>/followers
+    expects:
+      - status: 200
+        asserts:
+          - any(outputs.current.res.body, .id == inputs.users[0].id)

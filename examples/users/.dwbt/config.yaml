@@ -1,0 +1,10 @@
+default: local
+http:
+  timeout: 10s
+environments:
+  local:
+    servers:
+      api: http://127.0.0.1:8080
+  ci:
+    servers:
+      api: <<env.API_URL ?? "http://127.0.0.1:8080">>

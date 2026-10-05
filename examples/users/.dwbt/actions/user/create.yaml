@@ -1,0 +1,22 @@
+description: ユーザーを作成する
+params:
+  name: string
+  age: number
+steps:
+  - id: create
+    use: http
+    params:
+      server: api
+      method: POST
+      path: /api/users
+      json:
+        name: <<params.name>>
+        age: <<params.age>>
+    expects:
+      - status: 201
+        asserts:
+          - outputs.current.res.body.name == params.name
+    outputs:
+      user: <<outputs.current.res.body>>
+outputs:
+  user: <<outputs.current.create.user>>
