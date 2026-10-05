@@ -38,9 +38,9 @@ export function refsFor(scope: Scope, index: number, field: Field): RefGroup[] {
   }
   if (field === 'actionOutputs') {
     // Action outputs receive the outputs of the action's steps through
-    // outputs.current, not via inputs.
+    // outputs.steps, not via inputs.
     const refs = published(scope.steps, scope.steps.length).map((r) => ({
-      expr: `outputs.current.${r.via!.step}.${r.via!.output}`,
+      expr: `outputs.steps.${r.via!.step}.${r.via!.output}`,
     }))
     groups.push({ label: 'ステップの出力', refs })
     return groups.filter((g) => g.refs.length > 0)

@@ -70,9 +70,9 @@ func (c *checker) action(d *def.ActionDef, res def.Resolver) {
 	published := c.steps(d.Steps, sc)
 	for _, o := range d.Outputs {
 		c.refs(o.Value.Exprs(), rules{
-			where:        "action outputs",
-			params:       sc.params,
-			currentSteps: published,
+			where:  "action outputs",
+			params: sc.params,
+			steps:  published,
 		})
 	}
 }
@@ -127,8 +127,8 @@ func (c *checker) steps(steps []*def.Step, sc scope) map[string][]string {
 			}
 			continue
 		}
-		if st.ID == "current" {
-			c.errorf(st.IDPos, `step id "current" is reserved`)
+		if st.ID == "current" || st.ID == "steps" {
+			c.errorf(st.IDPos, "step id %q is reserved", st.ID)
 			continue
 		}
 		if _, dup := published[st.ID]; dup {
@@ -218,9 +218,9 @@ type rules struct {
 	current     bool
 	currentKeys []string
 	known       bool
-	// currentSteps is set in action outputs, where outputs.current holds the
-	// outputs of the action's steps.
-	currentSteps map[string][]string
+	// steps is set in action outputs, where outputs.steps holds the outputs
+	// of the action's steps.
+	steps map[string][]string
 }
 
 func (c *checker) refs(exprs []*tmpl.Expr, r rules) {
@@ -258,10 +258,13 @@ func (r rules) check(ref tmpl.Ref) string {
 		}
 	case "outputs":
 		if len(path) == 0 {
-			return "outputs must be followed by current or a step id"
+			return "outputs must be followed by current, steps or a step id"
 		}
-		if path[0] == "current" {
+		switch path[0] {
+		case "current":
 			return r.checkCurrent(path[1:])
+		case "steps":
+			return r.checkSteps(path[1:])
 		}
 		if r.published == nil {
 			return "outputs of other steps can only be received via inputs"
@@ -280,24 +283,32 @@ func (r rules) check(ref tmpl.Ref) string {
 }
 
 func (r rules) checkCurrent(path []string) string {
-	if r.currentSteps != nil {
-		if len(path) == 0 {
-			return ""
-		}
-		keys, ok := r.currentSteps[path[0]]
-		if !ok {
-			return fmt.Sprintf("the action has no step with id %q and outputs", path[0])
-		}
-		if len(path) > 1 && !slices.Contains(keys, path[1]) {
-			return fmt.Sprintf("step %q does not publish output %q", path[0], path[1])
-		}
-		return ""
-	}
 	if !r.current {
-		return "outputs.current is not available in " + r.where
+		msg := "outputs.current is not available in " + r.where
+		if r.steps != nil {
+			msg += "; use outputs.steps.<id> for the outputs of the action's steps"
+		}
+		return msg
 	}
 	if r.known && len(path) > 0 && !slices.Contains(r.currentKeys, path[0]) {
 		return fmt.Sprintf("the action does not publish output %q", path[0])
+	}
+	return ""
+}
+
+func (r rules) checkSteps(path []string) string {
+	if r.steps == nil {
+		return "outputs.steps is only available in action outputs"
+	}
+	if len(path) == 0 {
+		return ""
+	}
+	keys, ok := r.steps[path[0]]
+	if !ok {
+		return fmt.Sprintf("the action has no step with id %q and outputs", path[0])
+	}
+	if len(path) > 1 && !slices.Contains(keys, path[1]) {
+		return fmt.Sprintf("step %q does not publish output %q", path[0], path[1])
 	}
 	return ""
 }
