@@ -94,7 +94,7 @@ func TestCheckAction(t *testing.T) {
 	if probs := s.CheckAction("user/create", a); len(probs) != 0 {
 		t.Errorf("valid action: %+v", probs[0])
 	}
-	a.Outputs[0].Value = "<<outputs.current.nope.user>>"
+	a.Outputs[0].Value = "<<outputs.steps.nope.user>>"
 	probs := s.CheckAction("user/create", a)
 	if len(probs) != 1 || probs[0].Step != -1 || probs[0].Line == 0 {
 		t.Errorf("got %+v", probs)

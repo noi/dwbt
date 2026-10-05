@@ -238,7 +238,7 @@ func (r *Runner) call(ctx context.Context, res def.Resolver, callee def.Callee, 
 			published[st.ID] = out
 		}
 	}
-	env := tmpl.Env{"env": r.Env, "params": args, "outputs": map[string]any{"current": published}}
+	env := tmpl.Env{"env": r.Env, "params": args, "outputs": map[string]any{"steps": published}}
 	outputs := map[string]any{}
 	for _, o := range d.Outputs {
 		v, err := o.Value.Eval(env)

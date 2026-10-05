@@ -36,7 +36,7 @@ actions:
         outputs:
           user: <<outputs.current.res.body>>
     outputs:
-      user: <<outputs.current.create.user>>
+      user: <<outputs.steps.create.user>>
 steps:
   - id: prepare
     use: user-create

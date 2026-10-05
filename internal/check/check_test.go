@@ -61,7 +61,7 @@ steps:
     outputs:
       user: <<outputs.current.res.body>>
 outputs:
-  user: <<outputs.current.create.user>>
+  user: <<outputs.steps.create.user>>
 `
 
 func TestCheckValid(t *testing.T) {
@@ -152,7 +152,7 @@ steps:
 				`wf.yaml:20:13: inputs.zzz: undeclared input "zzz"`,
 				`wf.yaml:20:13: foo: unknown variable "foo"`,
 				`wf.yaml:23:13: outputs.current.nope: the action does not publish output "nope"`,
-				`wf.yaml:24:13: outputs: outputs must be followed by current or a step id`,
+				`wf.yaml:24:13: outputs: outputs must be followed by current, steps or a step id`,
 			},
 		},
 		{
@@ -183,6 +183,9 @@ steps:
   - id: dup
     use: http
     params: { server: api, method: GET, path: / }
+  - id: steps
+    use: http
+    params: { server: api, method: GET, path: <<outputs.steps.dup>> }
 `,
 			want: []string{
 				`wf.yaml:5:13: parameter "name" must be string`,
@@ -196,6 +199,8 @@ steps:
 				`wf.yaml:16:10: unknown action "nope"`,
 				`wf.yaml:17:9: step id "current" is reserved`,
 				`wf.yaml:23:9: duplicate step id "dup"`,
+				`wf.yaml:26:9: step id "steps" is reserved`,
+				`wf.yaml:28:47: outputs.steps.dup: outputs.steps is only available in action outputs`,
 			},
 		},
 		{
@@ -214,9 +219,10 @@ steps:
     outputs:
       v: 1
 outputs:
-  o: <<outputs.current.s.w>>
-  p: <<outputs.current.t>>
+  o: <<outputs.steps.s.w>>
+  p: <<outputs.steps.t>>
   q: <<outputs.s.v>>
+  r: <<outputs.current.s.v>>
 `,
 			},
 			wf: `
@@ -232,9 +238,10 @@ steps:
 				`http.yaml:1:1: action "http" conflicts with a built-in action`,
 				`actions call each other in a cycle: a -> b -> a`,
 				`c.yaml:7:45: params.y: undeclared parameter "y"`,
-				`c.yaml:11:6: outputs.current.s.w: step "s" does not publish output "w"`,
-				`c.yaml:12:6: outputs.current.t: the action has no step with id "t" and outputs`,
+				`c.yaml:11:6: outputs.steps.s.w: step "s" does not publish output "w"`,
+				`c.yaml:12:6: outputs.steps.t: the action has no step with id "t" and outputs`,
 				`c.yaml:13:6: outputs.s.v: outputs of other steps can only be received via inputs`,
+				`c.yaml:14:6: outputs.current.s.v: outputs.current is not available in action outputs; use outputs.steps.<id> for the outputs of the action's steps`,
 				`wf.yaml:3:3: action "a" is already defined in the actions directory`,
 				`wf.yaml:5:3: actions call each other in a cycle: local -> local`,
 			},
