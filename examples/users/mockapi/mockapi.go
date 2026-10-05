@@ -5,19 +5,22 @@ package mockapi
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 )
 
 // New returns a handler serving the users API:
 //
-//	POST /api/users                 create a user from {"name", "age"} (201)
-//	POST /api/users/{id}/followers  add the user {"user_id"} as a follower (204)
-//	GET  /api/users/{id}/followers  list the followers (200)
+//	POST   /api/users                 create a user from {"name", "age"} (201)
+//	DELETE /api/users/{id}            delete a user and its follows (204)
+//	POST   /api/users/{id}/followers  add the user {"user_id"} as a follower (204)
+//	GET    /api/users/{id}/followers  list the followers (200)
 func New() http.Handler {
-	s := &store{followers: map[int][]user{}}
+	s := &store{followers: map[int][]user{}, deleted: map[int]bool{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/users", s.createUser)
+	mux.HandleFunc("DELETE /api/users/{id}", s.deleteUser)
 	mux.HandleFunc("POST /api/users/{id}/followers", s.follow)
 	mux.HandleFunc("GET /api/users/{id}/followers", s.listFollowers)
 	return mux
@@ -33,6 +36,7 @@ type store struct {
 	mu        sync.Mutex
 	users     []user
 	followers map[int][]user
+	deleted   map[int]bool
 }
 
 func (s *store) createUser(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +52,22 @@ func (s *store) createUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, u)
 }
 
+func (s *store) deleteUser(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, ok := s.find(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+	s.deleted[id] = true
+	delete(s.followers, id)
+	for k, list := range s.followers {
+		s.followers[k] = slices.DeleteFunc(list, func(u user) bool { return u.ID == id })
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *store) follow(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserID int `json:"user_id"`
@@ -56,7 +76,8 @@ func (s *store) follow(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id, ok := s.find(r.PathValue("id"))
-	if !ok || body.UserID < 1 || body.UserID > len(s.users) {
+	_, found := s.find(strconv.Itoa(body.UserID))
+	if !ok || !found {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
@@ -81,7 +102,7 @@ func (s *store) listFollowers(w http.ResponseWriter, r *http.Request) {
 
 func (s *store) find(v string) (int, bool) {
 	id, err := strconv.Atoi(v)
-	return id, err == nil && id >= 1 && id <= len(s.users)
+	return id, err == nil && id >= 1 && id <= len(s.users) && !s.deleted[id]
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

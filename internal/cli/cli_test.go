@@ -64,7 +64,7 @@ func TestExample(t *testing.T) {
 	if code := a.Main(context.Background(), []string{"validate"}); code != ExitOK {
 		t.Fatalf("validate: exit %d\n%s", code, stderr)
 	}
-	if !strings.Contains(stdout.String(), "ok: 2 workflow(s), 2 action(s)") {
+	if !strings.Contains(stdout.String(), "ok: 2 workflow(s), 3 action(s)") {
 		t.Errorf("validate output:\n%s", stdout)
 	}
 
@@ -75,9 +75,10 @@ func TestExample(t *testing.T) {
 	}
 	for _, want := range []string{
 		"=== .dwbt/workflows/follow.yaml - ユーザーをフォローできる",
-		"  ok    prepare (user/create)",
-		"  ok    #2 (user/follow)",
-		"  ok    #3 (http)",
+		"  ok    setup: create (user/create)",
+		"  ok    #1 (user/follow)",
+		"  ok    #2 (http)",
+		"  ok    teardown: #1 (user/delete)",
 		"2 workflow(s): 2 passed, 0 failed, 0 errored",
 	} {
 		if !strings.Contains(stdout.String(), want) {
