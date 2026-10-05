@@ -125,11 +125,46 @@ export namespace doc {
 	
 	
 	
+	export class Setup {
+	    steps: Step[];
+	    outputs: Binding[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Setup(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.steps = this.convertValues(source["steps"], Step);
+	        this.outputs = this.convertValues(source["outputs"], Binding);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	export class Workflow {
 	    description: string;
 	    actions: Action[];
+	    setup?: Setup;
+	    inputs: Binding[];
 	    steps: Step[];
+	    teardown: Step[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Workflow(source);
@@ -139,7 +174,10 @@ export namespace doc {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.description = source["description"];
 	        this.actions = this.convertValues(source["actions"], Action);
+	        this.setup = this.convertValues(source["setup"], Setup);
+	        this.inputs = this.convertValues(source["inputs"], Binding);
 	        this.steps = this.convertValues(source["steps"], Step);
+	        this.teardown = this.convertValues(source["teardown"], Step);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -226,6 +264,7 @@ export namespace studio {
 	    message: string;
 	    file: string;
 	    line: number;
+	    section: string;
 	    step: number;
 	
 	    static createFrom(source: any = {}) {
@@ -237,6 +276,7 @@ export namespace studio {
 	        this.message = source["message"];
 	        this.file = source["file"];
 	        this.line = source["line"];
+	        this.section = source["section"];
 	        this.step = source["step"];
 	    }
 	}
@@ -299,6 +339,7 @@ export namespace studio {
 	    }
 	}
 	export class StepResult {
+	    section: string;
 	    index: number;
 	    label: string;
 	    status: string;
@@ -311,6 +352,7 @@ export namespace studio {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.section = source["section"];
 	        this.index = source["index"];
 	        this.label = source["label"];
 	        this.status = source["status"];
@@ -322,6 +364,7 @@ export namespace studio {
 	    status: string;
 	    duration: string;
 	    steps: StepResult[];
+	    error: string;
 	    problems: Problem[];
 	
 	    static createFrom(source: any = {}) {
@@ -333,6 +376,7 @@ export namespace studio {
 	        this.status = source["status"];
 	        this.duration = source["duration"];
 	        this.steps = this.convertValues(source["steps"], StepResult);
+	        this.error = source["error"];
 	        this.problems = this.convertValues(source["problems"], Problem);
 	    }
 	

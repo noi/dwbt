@@ -13,6 +13,7 @@ import {
   Problem,
   Project,
   RunResult,
+  Section,
   StepResult,
   Workflow,
 } from './model'
@@ -166,7 +167,7 @@ export default function App() {
         setYamlError('')
       } catch (e) {
         setYamlError(message(e))
-        setProblems([{ message: message(e), file: '', line: 0, step: -1 }])
+        setProblems([{ message: message(e), file: '', line: 0, section: '', step: -1 }])
       }
     }, 250)
     return () => clearTimeout(timer)
@@ -200,14 +201,23 @@ export default function App() {
   }, [project, draft?.doc, draft?.target.kind])
 
   const problemsByStep = useMemo(() => {
-    const m = new Map<number, Problem[]>()
-    for (const p of problems) if (p.step >= 0) m.set(p.step, [...(m.get(p.step) ?? []), p])
+    const m = new Map<Section, Map<number, Problem[]>>()
+    for (const p of problems) {
+      if (p.step < 0) continue
+      const sec = m.get(p.section as Section) ?? new Map<number, Problem[]>()
+      sec.set(p.step, [...(sec.get(p.step) ?? []), p])
+      m.set(p.section as Section, sec)
+    }
     return m
   }, [problems])
 
   const results = useMemo(() => {
-    const m = new Map<number, StepResult>()
-    for (const s of draft?.result?.steps ?? []) m.set(s.index, s)
+    const m = new Map<Section, Map<number, StepResult>>()
+    for (const s of draft?.result?.steps ?? []) {
+      const sec = m.get(s.section) ?? new Map<number, StepResult>()
+      sec.set(s.index, s)
+      m.set(s.section, sec)
+    }
     return m
   }, [draft?.result])
 
@@ -344,7 +354,7 @@ export default function App() {
                   onChange={update}
                   actions={actions}
                   servers={project.servers}
-                  problems={problemsByStep}
+                  problems={problemsByStep.get('steps')}
                 />
               )}
             </div>
@@ -456,11 +466,12 @@ function Result(props: { result?: RunResult; running: boolean }) {
       <div className={`result-summary ${statusClass(r.status)}`}>
         {r.status === 'ok' ? '成功' : r.status === 'FAIL' ? '失敗' : 'エラー'} <small>{r.duration}</small>
       </div>
+      {r.error && <pre className="result-error">{r.error}</pre>}
       {r.steps.map((s) => (
-        <div className="result-step" key={s.index}>
+        <div className="result-step" key={`${s.section}:${s.index}`}>
           <div className="row">
             <span className={`badge ${statusClass(s.status)}`}>{s.status}</span>
-            <span className="grow">{s.label}</span>
+            <span className="grow">{s.section === 'steps' ? s.label : `${s.section}: ${s.label}`}</span>
             <small className="muted">{s.duration}</small>
           </div>
           {s.error && <pre className="result-error">{s.error}</pre>}

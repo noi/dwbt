@@ -192,3 +192,44 @@ func sameData(t *testing.T, a, b []byte) {
 		t.Errorf("data differs:\n%s\n---\n%s", a, b)
 	}
 }
+
+func TestSetupTeardown(t *testing.T) {
+	src := `setup:
+  steps:
+    - id: a
+      use: user/create
+
+    - id: b
+      use: user/create
+  outputs:
+    a: <<outputs.steps.a.user>>
+inputs:
+  a: <<outputs.setup.a>>
+steps:
+  - use: http
+
+  - use: http
+teardown:
+  - use: user/delete
+
+  - use: user/delete
+`
+	wf, err := ParseWorkflow([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Setup == nil || len(wf.Setup.Steps) != 2 || len(wf.Setup.Outputs) != 1 || len(wf.Inputs) != 1 || len(wf.Teardown) != 2 {
+		t.Fatalf("unexpected workflow: %+v", wf)
+	}
+	out, err := EncodeWorkflow(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != src {
+		t.Errorf("encoded:\n%s\nwant:\n%s", out, src)
+	}
+
+	if _, err := ParseWorkflow([]byte("setup:\n  nope: 1\n")); err == nil || !strings.Contains(err.Error(), `unknown key "nope" in setup`) {
+		t.Errorf("err = %v", err)
+	}
+}

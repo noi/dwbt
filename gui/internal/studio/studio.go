@@ -85,8 +85,10 @@ type Problem struct {
 	// File is the path of the file relative to the project root, or "".
 	File string `json:"file"`
 	Line int    `json:"line"`
-	// Step is the index of the top-level step of the edited document the
-	// problem is in, or -1.
+	// Section is the list of steps of the edited document the problem is
+	// in: "setup", "steps" or "teardown", or "" if it is in none.
+	Section string `json:"section"`
+	// Step is the index of the step in Section the problem is in, or -1.
 	Step int `json:"step"`
 }
 
@@ -365,11 +367,16 @@ type RunResult struct {
 	Status   string        `json:"status"`
 	Duration string        `json:"duration"`
 	Steps    []*StepResult `json:"steps"`
-	Problems []*Problem    `json:"problems"`
+	// Error is an error outside the steps, in the outputs of the setup or
+	// the inputs of the workflow.
+	Error    string     `json:"error"`
+	Problems []*Problem `json:"problems"`
 }
 
 // StepResult is the result of a top-level step.
 type StepResult struct {
+	// Section is "setup", "steps" or "teardown".
+	Section  string `json:"section"`
 	Index    int    `json:"index"`
 	Label    string `json:"label"`
 	Status   string `json:"status"`
@@ -418,7 +425,7 @@ func (s *Studio) Run(ctx context.Context, name string, wf *doc.Workflow, opts Ru
 		Problems: []*Problem{},
 	}
 	for _, sr := range res.Steps {
-		st := &StepResult{Index: sr.Step.Index, Label: sr.Step.Label(), Status: sr.Status.String()}
+		st := &StepResult{Section: sr.Section.String(), Index: sr.Step.Index, Label: sr.Step.Label(), Status: sr.Status.String()}
 		if sr.Status != runner.Skipped {
 			st.Duration = engine.Duration(sr.Duration)
 		}
@@ -426,6 +433,9 @@ func (s *Studio) Run(ctx context.Context, name string, wf *doc.Workflow, opts Ru
 			st.Error = sr.Err.Error()
 		}
 		out.Steps = append(out.Steps, st)
+	}
+	if res.Err != nil {
+		out.Error = res.Err.Error()
 	}
 	return out, nil
 }
@@ -454,14 +464,14 @@ func (s *Studio) display(path string) string {
 
 // problems converts errors into problems. The positions in the file named
 // display are mapped to the steps starting at lines.
-func problems(errs []error, display string, lines []int) []*Problem {
+func problems(errs []error, display string, lines map[string][]int) []*Problem {
 	out := []*Problem{}
 	for _, e := range errs {
 		p := &Problem{Message: e.Error(), Step: -1}
 		if pos, ok := position(e); ok {
 			p.File, p.Line = pos.File, pos.Line
 			if pos.File == display {
-				p.Step = stepAt(lines, pos.Line)
+				p.Section, p.Step = stepAt(lines, pos.Line)
 			}
 		}
 		out = append(out, p)
@@ -477,37 +487,58 @@ func position(err error) (yamlx.Pos, bool) {
 	return yamlx.Pos{}, false
 }
 
-// stepLines returns the first line of each top-level step of the YAML data,
-// followed by the line of the key after steps, if any.
-func stepLines(data []byte) []int {
+// stepLines returns the first line of each top-level step of the YAML data
+// by section ("setup", "steps" or "teardown"), followed by the line where
+// the section ends.
+func stepLines(data []byte) map[string][]int {
 	var d yaml.Node
 	if yaml.Unmarshal(data, &d) != nil || len(d.Content) == 0 {
 		return nil
 	}
+	out := map[string][]int{}
 	m := d.Content[0]
-	var lines []int
 	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value != "steps" {
-			continue
-		}
-		for _, st := range m.Content[i+1].Content {
-			lines = append(lines, st.Line)
-		}
-		if i+2 < len(m.Content) {
-			lines = append(lines, m.Content[i+2].Line)
-		} else {
-			lines = append(lines, math.MaxInt)
+		end := nextLine(m, i)
+		switch k, v := m.Content[i].Value, m.Content[i+1]; k {
+		case "steps", "teardown":
+			out[k] = listLines(v, end)
+		case "setup":
+			for j := 0; j+1 < len(v.Content); j += 2 {
+				if v.Content[j].Value == "steps" {
+					out[k] = listLines(v.Content[j+1], min(nextLine(v, j), end))
+				}
+			}
 		}
 	}
-	return lines
+	return out
 }
 
-// stepAt returns the index of the step containing line, or -1.
-func stepAt(lines []int, line int) int {
-	for i := 0; i+1 < len(lines); i++ {
-		if lines[i] <= line && line < lines[i+1] {
-			return i
+// nextLine returns the line of the key after the i-th key of the mapping m,
+// or math.MaxInt if it is the last one.
+func nextLine(m *yaml.Node, i int) int {
+	if i+2 < len(m.Content) {
+		return m.Content[i+2].Line
+	}
+	return math.MaxInt
+}
+
+func listLines(seq *yaml.Node, end int) []int {
+	var lines []int
+	for _, st := range seq.Content {
+		lines = append(lines, st.Line)
+	}
+	return append(lines, end)
+}
+
+// stepAt returns the section and the index of the step containing line,
+// or "" and -1.
+func stepAt(lines map[string][]int, line int) (string, int) {
+	for sec, ls := range lines {
+		for i := 0; i+1 < len(ls); i++ {
+			if ls[i] <= line && line < ls[i+1] {
+				return sec, i
+			}
 		}
 	}
-	return -1
+	return "", -1
 }

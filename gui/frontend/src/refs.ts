@@ -26,6 +26,10 @@ export interface Scope {
   steps: Step[]
   /** Parameters of the enclosing action; undefined at the top level of a workflow. */
   params?: string[]
+  /** Inputs of the workflow, available to every step of its steps and teardown. */
+  inputs?: string[]
+  /** Steps whose outputs are published before steps, such as the steps of a workflow for its teardown. */
+  before?: Step[]
   actions: Map<string, ActionInfo>
 }
 
@@ -47,7 +51,8 @@ export function refsFor(scope: Scope, index: number, field: Field): RefGroup[] {
   }
 
   const step = scope.steps[index]
-  const preceding = published(scope.steps, index)
+  const before = scope.before ?? []
+  const preceding = published([...before, ...scope.steps], before.length + index)
   if (field === 'inputs') {
     groups.push({ label: '前のステップの出力', refs: preceding })
     return groups.filter((g) => g.refs.length > 0)
@@ -57,6 +62,9 @@ export function refsFor(scope: Scope, index: number, field: Field): RefGroup[] {
     label: 'このステップの inputs',
     refs: step.inputs.filter((i) => i.name).map((i) => ({ expr: `inputs.${i.name}` })),
   })
+  if (scope.inputs?.length) {
+    groups.push({ label: 'ワークフローの inputs', refs: scope.inputs.map((n) => ({ expr: `inputs.${n}` })) })
+  }
   if (preceding.length > 0) {
     groups.push({
       label: '前のステップの出力 (inputs に追加)',
@@ -84,6 +92,12 @@ export function refsFor(scope: Scope, index: number, field: Field): RefGroup[] {
     groups.push({ label: `${step.use || 'アクション'} の出力`, refs })
   }
   return groups.filter((g) => g.refs.length > 0)
+}
+
+/** Lists the references available in the inputs of a workflow: the outputs of its setup. */
+export function workflowInputRefs(setup: string[]): RefGroup[] {
+  const refs = setup.map((o) => ({ expr: `outputs.setup.${o}` }))
+  return refs.length > 0 ? [{ label: 'setup の出力', refs }] : []
 }
 
 /** Lists the outputs published by the steps before index. */
