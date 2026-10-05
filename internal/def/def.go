@@ -16,7 +16,9 @@ import (
 // Workflow is a workflow definition.
 type Workflow struct {
 	// Name is the path of the file relative to the current directory.
-	Name        string
+	Name string
+	// Path is the path of the file as loaded.
+	Path        string
 	Description string
 	// Actions are the actions defined in the workflow file.
 	Actions map[string]*ActionDef

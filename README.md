@@ -47,3 +47,21 @@ func main() {
 ```
 
 アクションは [`action.Action`](action/action.go) インターフェースを実装します。
+
+## Go のテストからの実行
+
+テスト対象が Go で書かれている場合は、[`dwbttest`](dwbttest) パッケージを使って `go test` からワークフローを実行できます。
+
+```go
+func TestE2E(t *testing.T) {
+	srv := httptest.NewServer(app.NewHandler())
+	defer srv.Close()
+
+	dwbttest.New("testdata/.dwbt").
+		Server("api", srv.URL).
+		Action("db/seed", seedAction{}).
+		Run(t)
+}
+```
+
+`New` には `.dwbt` ディレクトリを指定します。定義を検証してから、ワークフローごとにサブテストとして実行するので、`go test -run TestE2E/follow.yaml` のように選んで実行できます。各メソッドはレシーバーを書き換えずに新しい値を返すので、共通の設定を複数のテストで使い回せます。
