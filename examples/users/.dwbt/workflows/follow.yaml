@@ -1,29 +1,40 @@
 description: ユーザーをフォローできる
-steps:
-  - id: prepare
-    use: user/create
-    foreach: [{ name: a, age: 18 }, { name: b, age: 19 }]
-    params:
-      name: <<item.name>>
-      age: <<item.age>>
-    outputs:
-      users: <<outputs.current.user>>
+setup:
+  steps:
+    - id: create
+      use: user/create
+      foreach: [{ name: a, age: 18 }, { name: b, age: 19 }]
+      params:
+        name: <<item.name>>
+        age: <<item.age>>
+      outputs:
+        user: <<outputs.current.user>>
+  outputs:
+    follower: <<outputs.steps.create.user[0]>>
+    followee: <<outputs.steps.create.user[1]>>
 
+inputs:
+  follower: <<outputs.setup.follower>>
+  followee: <<outputs.setup.followee>>
+
+steps:
   - use: user/follow
-    inputs:
-      users: <<outputs.prepare.users>>
     params:
-      follower: <<inputs.users[0].id>>
-      followee: <<inputs.users[1].id>>
+      follower: <<inputs.follower.id>>
+      followee: <<inputs.followee.id>>
 
   - use: http
-    inputs:
-      users: <<outputs.prepare.users>>
     params:
       server: api
       method: GET
-      path: /api/users/<<inputs.users[1].id>>/followers
+      path: /api/users/<<inputs.followee.id>>/followers
     expects:
       - status: 200
         asserts:
-          - any(outputs.current.res.body, .id == inputs.users[0].id)
+          - any(outputs.current.res.body, .id == inputs.follower.id)
+
+teardown:
+  - use: user/delete
+    foreach: <<[inputs.follower, inputs.followee]>>
+    params:
+      id: <<item.id>>

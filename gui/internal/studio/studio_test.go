@@ -43,7 +43,7 @@ func TestProject(t *testing.T) {
 	for _, a := range p.Actions {
 		names = append(names, a.Name)
 	}
-	if want := []string{"http", "user/create", "user/follow"}; !slices.Equal(names, want) {
+	if want := []string{"http", "user/create", "user/delete", "user/follow"}; !slices.Equal(names, want) {
 		t.Errorf("actions: got %v, want %v", names, want)
 	}
 	if http := p.Actions[0]; !http.Builtin || http.Kind != "http" || !slices.Equal(http.Outputs, []string{"res"}) {
@@ -70,17 +70,17 @@ func TestCheckWorkflow(t *testing.T) {
 		t.Errorf("valid workflow: %+v", probs[0])
 	}
 
-	wf.Steps[1].Use = "user/unfollow"
-	wf.Steps[2].Params = append(wf.Steps[2].Params, &doc.Binding{Name: "x", Value: "<<outputs.nope>>"})
+	wf.Steps[0].Use = "user/unfollow"
+	wf.Steps[1].Params = append(wf.Steps[1].Params, &doc.Binding{Name: "x", Value: "<<outputs.nope>>"})
 	probs := s.CheckWorkflow("follow.yaml", wf)
 	if len(probs) != 3 {
 		t.Fatalf("got %d problems", len(probs))
 	}
-	if p := probs[0]; p.Step != 1 || p.File != filepath.Join(".dwbt", "workflows", "follow.yaml") || !strings.Contains(p.Message, `unknown action "user/unfollow"`) {
+	if p := probs[0]; p.Section != "steps" || p.Step != 0 || p.File != filepath.Join(".dwbt", "workflows", "follow.yaml") || !strings.Contains(p.Message, `unknown action "user/unfollow"`) {
 		t.Errorf("got %+v", p)
 	}
 	for _, p := range probs[1:] {
-		if p.Step != 2 {
+		if p.Section != "steps" || p.Step != 1 {
 			t.Errorf("got %+v", p)
 		}
 	}
@@ -166,18 +166,22 @@ func TestRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status != "ok" || len(res.Steps) != 3 || res.Steps[0].Label != "prepare (user/create)" {
+	if res.Status != "ok" || len(res.Steps) != 4 || res.Steps[0].Section != "setup" || res.Steps[0].Label != "create (user/create)" || res.Steps[3].Section != "teardown" {
 		t.Errorf("got %+v", res)
 	}
 
 	status := 500
-	wf.Steps[2].Expects[0].Status = &status
+	wf.Steps[1].Expects[0].Status = &status
 	res, err = s.Run(context.Background(), "follow.yaml", wf, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Status != "FAIL" || res.Steps[2].Status != "FAIL" || !strings.Contains(res.Steps[2].Error, "expected 500, got 200") {
 		t.Errorf("got %+v", res.Steps[2])
+	}
+	// The teardown runs after the failure.
+	if res.Steps[3].Status != "ok" {
+		t.Errorf("teardown: got %+v", res.Steps[3])
 	}
 
 	wf.Steps[0].Use = "nope"

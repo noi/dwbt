@@ -5,7 +5,7 @@
 | パス | 内容 |
 |---|---|
 | `.dwbt/config.yaml` | 環境プロファイル（`local` / `ci`） |
-| `.dwbt/actions/user/` | ユーザー定義アクション（`user/create`、`user/follow`） |
+| `.dwbt/actions/user/` | ユーザー定義アクション（`user/create`、`user/follow`、`user/delete`） |
 | `.dwbt/workflows/` | ワークフロー |
 | `mockapi/` | テスト対象のモック API の実装 |
 | `server/` | モック API を起動するコマンド |

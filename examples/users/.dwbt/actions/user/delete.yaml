@@ -1,0 +1,11 @@
+description: ユーザーを削除する
+params:
+  id: number
+steps:
+  - use: http
+    params:
+      server: api
+      method: DELETE
+      path: /api/users/<<params.id>>
+    expects:
+      - status: 204
