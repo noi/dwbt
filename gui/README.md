@@ -18,15 +18,19 @@ Values are read as YAML: `20` is a number and `"20"` a string. Saving rewrites t
 
 ## Development
 
-The [Wails CLI](https://wails.io/docs/gettingstarted/installation) and Node.js are required.
+Go and Node.js are required. The Wails CLI is registered as a tool in `gui/go.mod`, so it needs no separate installation (run it as `go tool wails` in `gui`).
+
+Run make at the root of the repository:
 
 ```sh
-go install github.com/wailsapp/wails/v2/cmd/wails@latest
-cd gui
-wails dev -appargs ../examples/users   # run in development mode
-wails build                            # build the app into build/bin
-go test ./...
+make            # list the targets
+make run        # install the frontend dependencies and run with hot reload
+make run DIR=path/to/project   # choose the directory to open (examples/users by default)
+make build      # build the app into gui/build/bin
+make test       # run the Go tests of dwbt and the GUI, and type-check the frontend
 ```
+
+`make run` opens examples/users by default, so saving rewrites the files of the example.
 
 The app opens the `.dwbt` directory found in the directory given as its argument (the current directory by default) or one of its parents. If none is found, you can choose one in the app.
 

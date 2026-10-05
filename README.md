@@ -48,7 +48,7 @@ See [examples/users](examples/users) for an example.
 
 ## GUI
 
-[gui](gui) provides a desktop app to create, edit and run workflows visually.
+[gui](gui) provides a desktop app to create, edit and run workflows visually. Run `make run` at the root of the repository to start it.
 
 ## Extending actions in Go
 
