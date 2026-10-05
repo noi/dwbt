@@ -24,7 +24,7 @@ go install github.com/noi/dwbt/cmd/dwbt@latest
 
 ```text
 dwbt validate [workflow...]
-dwbt run      [workflow...] [--env <name>] [--server <id>=<url>]...
+dwbt run      [workflow...] [--env <name>] [--server <id>=<url>]... [--parallel <n>]
 ```
 
 dwbt searches for a `.dwbt` directory starting from the current directory and walking up through its parents, and loads the definitions inside it.
@@ -46,6 +46,8 @@ environments:
     servers:
       api: unix:///tmp/app.sock
 ```
+
+Workflows run one by one by default. `--parallel <n>` runs up to `n` workflows at the same time, and reports each of them as it finishes. Workflows that run in parallel must not depend on each other's data, and actions implemented in Go may be called concurrently.
 
 The exit code is `0` on success, `1` when `expects` do not match, and `2` for any other error.
 

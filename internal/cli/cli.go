@@ -9,6 +9,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/noi/dwbt/action"
 	"github.com/noi/dwbt/internal/def"
@@ -25,7 +26,7 @@ const (
 
 const usage = `Usage:
   dwbt validate [workflow...]
-  dwbt run      [workflow...] [--env <name>] [--server <id>=<url>]...
+  dwbt run      [workflow...] [--env <name>] [--server <id>=<url>]... [--parallel <n>]
 
 Workflows default to all files under .dwbt/workflows.
 `
@@ -79,8 +80,13 @@ func (a *App) run(ctx context.Context, args []string) int {
 	envName := fs.String("env", "", "environment profile in config.yaml")
 	overrides := serverFlags{}
 	fs.Var(overrides, "server", "override a server URL, as `id=url` (repeatable)")
+	parallel := fs.Int("parallel", 1, "run up to `n` workflows at the same time")
 	paths, err := parseArgs(fs, args)
 	if err != nil {
+		return ExitError
+	}
+	if *parallel < 1 {
+		fmt.Fprintf(a.Stderr, "error: --parallel must be at least 1, got %d\n", *parallel)
 		return ExitError
 	}
 	plan, ok := a.load(paths)
@@ -99,8 +105,7 @@ func (a *App) run(ctx context.Context, args []string) int {
 	}
 
 	var counts [4]int
-	for _, wf := range plan.Workflows {
-		res := r.Run(ctx, wf)
+	for res := range runAll(ctx, r, plan.Workflows, *parallel) {
 		counts[res.Status]++
 		a.report(res)
 	}
@@ -113,6 +118,29 @@ func (a *App) run(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 	return ExitOK
+}
+
+// runAll runs up to n workflows at the same time, and sends their results
+// in the order they finish. With n = 1, the workflows run one by one in
+// order.
+func runAll(ctx context.Context, r *runner.Runner, workflows []*def.Workflow, n int) <-chan *runner.Result {
+	results := make(chan *runner.Result)
+	go func() {
+		sem := make(chan struct{}, n)
+		var wg sync.WaitGroup
+		for _, wf := range workflows {
+			sem <- struct{}{}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				results <- r.Run(ctx, wf)
+				<-sem
+			}()
+		}
+		wg.Wait()
+		close(results)
+	}()
+	return results
 }
 
 // load loads the project and the workflows, and validates them.
