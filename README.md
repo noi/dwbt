@@ -1,34 +1,39 @@
 # dwbt
 
-dwbt (Defined Workflow Based Tests) は、E2E テストを YAML のワークフローとして記述し、実行するツールです。
+**D**efined **W**orkflow **B**ased **T**ests — pronounced "doubt" (ダウト)
 
-仕様は [Issue #1 の仕様コメント](https://github.com/noi/dwbt/issues/1) を参照してください。
+dwbt is a tool for writing E2E tests as YAML workflows and running them.
 
-## インストール
+> [!NOTE]
+> dwbt is under active development. Features and usage are not yet stable.
+
+For the specification, see [the specification comment in Issue #1](https://github.com/noi/dwbt/issues/1).
+
+## Installation
 
 ```sh
 go install github.com/noi/dwbt/cmd/dwbt@latest
 ```
 
-## 使い方
+## Usage
 
 ```text
 dwbt validate [workflow...]
 dwbt run      [workflow...] [--env <name>] [--server <id>=<url>]...
 ```
 
-カレントディレクトリから親へさかのぼって `.dwbt` ディレクトリを探し、その中の定義を読み込みます。
+dwbt searches for a `.dwbt` directory starting from the current directory and walking up through its parents, and loads the definitions inside it.
 
 ```text
 .dwbt/
-  config.yaml          # 環境プロファイル
+  config.yaml          # environment profiles
   actions/
     user/create.yaml   # → use: user/create
   workflows/
     follow.yaml
 ```
 
-サーバーの URL には `http://` / `https://` の URL のほか、Unix ドメインソケットのパスを `unix:///path/to/app.sock`（絶対パス）または `unix:app.sock`（カレントディレクトリからの相対パス）の形式で指定できます。
+A server URL can be an `http://` or `https://` URL, or the path to a Unix domain socket in the form `unix:///path/to/app.sock` (absolute path) or `unix:app.sock` (relative to the current directory).
 
 ```yaml
 environments:
@@ -37,13 +42,13 @@ environments:
       api: unix:///tmp/app.sock
 ```
 
-終了コードは、成功が `0`、`expects` の不一致が `1`、それ以外のエラーが `2` です。
+The exit code is `0` on success, `1` when `expects` do not match, and `2` for any other error.
 
-[examples/users](examples/users) にサンプルがあります。
+See [examples/users](examples/users) for an example.
 
-## Go によるアクションの拡張
+## Extending actions in Go
 
-dwbt をライブラリとして使い、Go で実装したアクションを登録したバイナリをビルドできます。
+You can use dwbt as a library to build a binary with actions implemented in Go.
 
 ```go
 package main
@@ -55,11 +60,11 @@ func main() {
 }
 ```
 
-アクションは [`action.Action`](action/action.go) インターフェースを実装します。
+Actions implement the [`action.Action`](action/action.go) interface.
 
-## Go のテストからの実行
+## Running from Go tests
 
-テスト対象が Go で書かれている場合は、[`dwbttest`](dwbttest) パッケージを使って `go test` からワークフローを実行できます。
+If the system under test is written in Go, you can use the [`dwbttest`](dwbttest) package to run workflows from `go test`.
 
 ```go
 func TestE2E(t *testing.T) {
@@ -73,4 +78,8 @@ func TestE2E(t *testing.T) {
 }
 ```
 
-`New` には `.dwbt` ディレクトリを指定します。定義を検証してから、ワークフローごとにサブテストとして実行するので、`go test -run TestE2E/follow.yaml` のように選んで実行できます。各メソッドはレシーバーを書き換えずに新しい値を返すので、共通の設定を複数のテストで使い回せます。
+`New` takes the path to a `.dwbt` directory. It validates the definitions and then runs each workflow as a subtest, so you can select workflows with `go test -run TestE2E/follow.yaml`. Each method returns a new value without modifying its receiver, so you can share common settings across multiple tests.
+
+## License
+
+[MIT](LICENSE)
