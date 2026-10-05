@@ -112,7 +112,11 @@ func (p *Project) LoadWorkflow(path string) (*Workflow, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ParseWorkflow(n, p.display(path))
+	wf, err := ParseWorkflow(n, p.display(path))
+	if wf != nil {
+		wf.Path = path
+	}
+	return wf, err
 }
 
 func (p *Project) loadConfig(path string) (*Config, error) {
