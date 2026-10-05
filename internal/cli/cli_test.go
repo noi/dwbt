@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -185,6 +186,13 @@ steps:
 			stderr: []string{`environment "prod" is not defined (available: local)`},
 		},
 		{
+			name:   "invalid parallel",
+			files:  map[string]string{".dwbt/workflows/a.yaml": "steps: []\n"},
+			args:   []string{"run", "--parallel", "0"},
+			code:   ExitError,
+			stderr: []string{"--parallel must be at least 1, got 0"},
+		},
+		{
 			name:   "unknown command",
 			files:  map[string]string{".dwbt/workflows/a.yaml": "steps: []\n"},
 			args:   []string{"deploy"},
@@ -215,6 +223,66 @@ steps:
 				t.Logf("stdout:\n%s\nstderr:\n%s", stdout, stderr)
 			}
 		})
+	}
+}
+
+// barrier returns a server whose requests wait until n of them arrive. A
+// request that waits for too long fails with 504.
+func barrier(t *testing.T, n int) *httptest.Server {
+	var mu sync.Mutex
+	arrived := 0
+	all := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		arrived++
+		if arrived == n {
+			close(all)
+		}
+		mu.Unlock()
+		select {
+		case <-all:
+		case <-time.After(2 * time.Second):
+			w.WriteHeader(http.StatusGatewayTimeout)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestParallel(t *testing.T) {
+	// The workflows pass only when all of them run at the same time.
+	const n = 3
+	srv := barrier(t, n)
+	files := map[string]string{}
+	for _, name := range []string{"a", "b", "c"} {
+		files[".dwbt/workflows/"+name+".yaml"] = `
+steps:
+  - use: http
+    params: { server: api, method: GET, path: / }
+    expects:
+      - status: 200
+`
+	}
+	dir := writeFiles(t, files)
+
+	a, stdout, stderr := app(dir)
+	code := a.Main(context.Background(), []string{"run", "--server", "api=" + srv.URL, "--parallel", "3"})
+	if code != ExitOK {
+		t.Fatalf("exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	// The report of each workflow is not interleaved with the others.
+	blocks := strings.Split(strings.TrimPrefix(stdout.String(), "=== "), "\n=== ")
+	if len(blocks) != n {
+		t.Fatalf("got %d reports, want %d:\n%s", len(blocks), n, stdout)
+	}
+	for _, b := range blocks {
+		lines := strings.Split(b, "\n")
+		if len(lines) < 3 || !strings.HasPrefix(lines[1], "  ok    #1 (http)") || !strings.HasPrefix(lines[2], "--- ok "+lines[0]+" ") {
+			t.Errorf("unexpected report:\n=== %s", b)
+		}
+	}
+	if !strings.Contains(stdout.String(), "3 workflow(s): 3 passed, 0 failed, 0 errored") {
+		t.Errorf("stdout:\n%s", stdout)
 	}
 }
 

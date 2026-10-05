@@ -66,6 +66,8 @@ type Runtime interface {
 // receives evaluated parameters whose types have already been checked against
 // Params, and returns the outputs, which must contain exactly the keys listed
 // by Outputs.
+//
+// Run may be called concurrently when workflows run in parallel.
 type Action interface {
 	Params() ParamSpec
 	Outputs() []string
