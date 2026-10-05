@@ -115,7 +115,13 @@ follow:
 
 func run(t *testing.T, srv *httptest.Server, steps string) *Result {
 	t.Helper()
-	src := "actions:\n" + indent(actions) + "steps:\n" + indent(steps)
+	return runWorkflow(t, srv, "steps:\n"+indent(steps))
+}
+
+// runWorkflow runs a workflow with the actions above, given its other keys.
+func runWorkflow(t *testing.T, srv *httptest.Server, body string) *Result {
+	t.Helper()
+	src := "actions:\n" + indent(actions) + body
 	n, err := yamlx.Parse([]byte(src), "wf.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -291,5 +297,165 @@ func TestForeachOutputs(t *testing.T) {
 `)
 	if res.Status != Passed {
 		t.Fatalf("status = %s: %v", res.Status, res.Steps)
+	}
+}
+
+// statuses returns the labels and statuses of the steps of res.
+func statuses(res *Result) []string {
+	var out []string
+	for _, s := range res.Steps {
+		out = append(out, fmt.Sprintf("%s %s %s", s.Section, s.Step.Label(), s.Status))
+	}
+	return out
+}
+
+func TestSetupTeardown(t *testing.T) {
+	srv := usersAPI(t)
+	res := runWorkflow(t, srv, `
+setup:
+  steps:
+    - id: create
+      use: create
+      foreach: [a, b]
+      params: { name: <<item>>, age: 20 }
+      outputs:
+        user: <<outputs.current.user>>
+  outputs:
+    alice: <<outputs.steps.create.user[0]>>
+    bob: <<outputs.steps.create.user[1]>>
+inputs:
+  alice: <<outputs.setup.alice>>
+  bob: <<outputs.setup.bob>>
+steps:
+  - id: follow
+    use: follow
+    params: { follower: <<inputs.alice.id>>, followee: <<inputs.bob.id>> }
+  - id: check
+    use: http
+    params: { server: api, method: GET, path: /api/users/<<inputs.bob.id>>/followers }
+    outputs:
+      followers: <<outputs.current.res.body>>
+teardown:
+  - use: http
+    inputs:
+      followers: <<outputs.check.followers>>
+    params: { server: api, method: GET, path: /api/users/<<inputs.bob.id>>/followers }
+    expects:
+      - asserts:
+          - outputs.current.res.body == inputs.followers
+          - inputs.followers[0].id == inputs.alice.id
+`)
+	want := []string{
+		"setup create (create) ok",
+		"steps follow (follow) ok",
+		"steps check (http) ok",
+		"teardown #1 (http) ok",
+	}
+	if got := statuses(res); fmt.Sprint(got) != fmt.Sprint(want) || res.Status != Passed {
+		t.Errorf("status = %s, steps = %q, want %q", res.Status, got, want)
+		for _, s := range res.Steps {
+			if s.Err != nil {
+				t.Log(s.Err)
+			}
+		}
+	}
+}
+
+func TestSetupFailure(t *testing.T) {
+	srv := usersAPI(t)
+	res := runWorkflow(t, srv, `
+setup:
+  steps:
+    - id: alice
+      use: create
+      params: { name: alice, age: 20 }
+      outputs:
+        user: <<outputs.current.user>>
+    - id: bob
+      use: http
+      params: { server: api, method: GET, path: /nope }
+      expects:
+        - status: 200
+      outputs:
+        user: <<outputs.current.res.body>>
+    - use: create
+      params: { name: carol, age: 20 }
+  outputs:
+    alice: <<outputs.steps.alice.user>>
+    bob: <<outputs.steps.bob.user>>
+inputs:
+  alice: <<outputs.setup.alice>>
+  bob: <<outputs.setup.bob>>
+steps:
+  - id: check
+    use: http
+    params: { server: api, method: GET, path: / }
+    outputs:
+      res: <<outputs.current.res>>
+teardown:
+  - use: http
+    params: { server: api, method: GET, path: /api/users/<<inputs.alice.id>>/followers }
+  - use: http
+    params: { server: api, method: GET, path: /api/users/<<inputs.bob.id>>/followers }
+  - use: http
+    inputs:
+      res: <<outputs.check.res>>
+    params: { server: api, method: GET, path: / }
+  - use: http
+    params: { server: api, method: GET, path: /nope }
+    expects:
+      - status: 200
+  - use: http
+    params: { server: api, method: GET, path: /api/users/<<inputs.alice.id>>/followers }
+`)
+	want := []string{
+		"setup alice (create) ok",
+		"setup bob (http) FAIL",
+		"setup #3 (create) skip",
+		"steps check (http) skip",
+		// The teardown runs even after a failure, and skips the steps
+		// referring to what is not available.
+		"teardown #1 (http) ok",
+		"teardown #2 (http) skip",
+		"teardown #3 (http) skip",
+		"teardown #4 (http) FAIL",
+		"teardown #5 (http) ok",
+	}
+	if got := statuses(res); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("steps = %q, want %q", got, want)
+	}
+	if res.Status != Failed || res.Err != nil {
+		t.Errorf("status = %s, err = %v", res.Status, res.Err)
+	}
+}
+
+func TestWorkflowInputsError(t *testing.T) {
+	srv := usersAPI(t)
+	res := runWorkflow(t, srv, `
+setup:
+  steps:
+    - id: alice
+      use: create
+      params: { name: alice, age: 20 }
+      outputs:
+        user: <<outputs.current.user>>
+  outputs:
+    alice: <<outputs.steps.alice.user>>
+inputs:
+  alice: <<outputs.setup.alice>>
+  bad: <<outputs.setup.alice.name + 1>>
+steps:
+  - use: http
+    params: { server: api, method: GET, path: / }
+teardown:
+  - use: http
+    params: { server: api, method: GET, path: /api/users/<<inputs.alice.id>>/followers }
+`)
+	want := []string{"setup alice (create) ok", "steps #1 (http) skip", "teardown #1 (http) ok"}
+	if got := statuses(res); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("steps = %q, want %q", got, want)
+	}
+	if res.Status != Errored || res.Err == nil || res.Err.In != "inputs" || res.Err.At != 1 || !strings.Contains(res.Err.Error(), "wf.yaml:") {
+		t.Errorf("status = %s, err = %v", res.Status, res.Err)
 	}
 }

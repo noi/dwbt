@@ -41,7 +41,7 @@ func Check(p *def.Project, presets map[string]action.Action, workflows []*def.Wo
 			c.action(d, res)
 		}
 		c.cycles(slices.Collect(maps.Values(wf.Actions)), res)
-		c.steps(wf.Steps, scope{res: res})
+		c.workflow(wf, res)
 	}
 	return c.errs.Err()
 }
@@ -54,12 +54,38 @@ func (c *checker) errorf(pos yamlx.Pos, format string, args ...any) {
 	c.errs = append(c.errs, yamlx.Errorf(pos, format, args...))
 }
 
+// workflow checks the setup, inputs, steps and teardown of wf.
+func (c *checker) workflow(wf *def.Workflow, res def.Resolver) {
+	// setup is nil without setup, which makes outputs.setup unavailable.
+	var setup []string
+	if wf.Setup != nil {
+		published := c.steps(wf.Setup.Steps, scope{res: res})
+		setup = []string{}
+		for _, o := range wf.Setup.Outputs {
+			c.refs(o.Value.Exprs(), rules{where: "setup outputs", steps: published})
+			setup = append(setup, o.Name)
+		}
+	}
+	inputs := []string{}
+	for _, in := range wf.Inputs {
+		c.refs(in.Value.Exprs(), rules{where: "workflow inputs", setup: setup})
+		inputs = append(inputs, in.Name)
+	}
+	published := c.steps(wf.Steps, scope{res: res, inputs: inputs})
+	c.steps(wf.Teardown, scope{res: res, inputs: inputs, published: published})
+}
+
 // scope describes where a list of steps is defined.
 type scope struct {
 	res def.Resolver
 	// params are the parameters of the enclosing action; nil at the top
 	// level of a workflow.
 	params []string
+	// inputs are the inputs of the workflow, available to every step.
+	inputs []string
+	// published holds the outputs published before the list, such as
+	// those of the steps for the teardown.
+	published map[string][]string
 }
 
 func (c *checker) action(d *def.ActionDef, res def.Resolver) {
@@ -80,14 +106,23 @@ func (c *checker) action(d *def.ActionDef, res def.Resolver) {
 // steps checks a list of steps and returns the outputs published by each
 // step id.
 func (c *checker) steps(steps []*def.Step, sc scope) map[string][]string {
-	published := map[string][]string{}
+	published := maps.Clone(sc.published)
+	if published == nil {
+		published = map[string][]string{}
+	}
 	for _, st := range steps {
 		callee, ok := sc.res.Resolve(st.Use)
 		if !ok && st.Use != "" {
 			c.errorf(st.UsePos, "unknown action %q", st.Use)
 		}
-		var inputs []string
+		inputs := slices.Clone(sc.inputs)
+		if inputs == nil {
+			inputs = []string{}
+		}
 		for _, in := range st.Inputs {
+			if slices.Contains(sc.inputs, in.Name) {
+				c.errorf(in.Pos, "input %q is already defined by the workflow", in.Name)
+			}
 			inputs = append(inputs, in.Name)
 		}
 		var currentKeys []string
@@ -127,7 +162,7 @@ func (c *checker) steps(steps []*def.Step, sc scope) map[string][]string {
 			}
 			continue
 		}
-		if st.ID == "current" || st.ID == "steps" {
+		if st.ID == "current" || st.ID == "steps" || st.ID == "setup" {
 			c.errorf(st.IDPos, "step id %q is reserved", st.ID)
 			continue
 		}
@@ -218,9 +253,12 @@ type rules struct {
 	current     bool
 	currentKeys []string
 	known       bool
-	// steps is set in action outputs, where outputs.steps holds the outputs
-	// of the action's steps.
+	// steps is set in action and setup outputs, where outputs.steps holds
+	// the outputs of their steps.
 	steps map[string][]string
+	// setup holds the outputs of the setup in workflow inputs, or nil if
+	// outputs.setup is not available.
+	setup []string
 }
 
 func (c *checker) refs(exprs []*tmpl.Expr, r rules) {
@@ -246,8 +284,8 @@ func (r rules) check(ref tmpl.Ref) string {
 			return fmt.Sprintf("undeclared parameter %q", path[0])
 		}
 	case "inputs":
-		if r.inputs == nil && r.where == "inputs" {
-			return "inputs cannot be referenced in inputs"
+		if r.inputs == nil {
+			return "inputs cannot be referenced in " + r.where
 		}
 		if len(path) > 0 && !slices.Contains(r.inputs, path[0]) {
 			return fmt.Sprintf("undeclared input %q", path[0])
@@ -258,13 +296,18 @@ func (r rules) check(ref tmpl.Ref) string {
 		}
 	case "outputs":
 		if len(path) == 0 {
-			return "outputs must be followed by current, steps or a step id"
+			return "outputs must be followed by current, steps, setup or a step id"
 		}
 		switch path[0] {
 		case "current":
 			return r.checkCurrent(path[1:])
 		case "steps":
 			return r.checkSteps(path[1:])
+		case "setup":
+			return r.checkSetup(path[1:])
+		}
+		if r.where == "workflow inputs" {
+			return "workflow inputs can only receive the outputs of the setup"
 		}
 		if r.published == nil {
 			return "outputs of other steps can only be received via inputs"
@@ -286,7 +329,7 @@ func (r rules) checkCurrent(path []string) string {
 	if !r.current {
 		msg := "outputs.current is not available in " + r.where
 		if r.steps != nil {
-			msg += "; use outputs.steps.<id> for the outputs of the action's steps"
+			msg += "; use outputs.steps.<id> for the outputs of the steps"
 		}
 		return msg
 	}
@@ -298,17 +341,30 @@ func (r rules) checkCurrent(path []string) string {
 
 func (r rules) checkSteps(path []string) string {
 	if r.steps == nil {
-		return "outputs.steps is only available in action outputs"
+		return "outputs.steps is only available in action and setup outputs"
 	}
 	if len(path) == 0 {
 		return ""
 	}
 	keys, ok := r.steps[path[0]]
 	if !ok {
-		return fmt.Sprintf("the action has no step with id %q and outputs", path[0])
+		return fmt.Sprintf("no step with id %q and outputs in steps", path[0])
 	}
 	if len(path) > 1 && !slices.Contains(keys, path[1]) {
 		return fmt.Sprintf("step %q does not publish output %q", path[0], path[1])
+	}
+	return ""
+}
+
+func (r rules) checkSetup(path []string) string {
+	if r.where != "workflow inputs" {
+		return "outputs.setup is only available in workflow inputs"
+	}
+	if r.setup == nil {
+		return "the workflow has no setup"
+	}
+	if len(path) > 0 && !slices.Contains(r.setup, path[0]) {
+		return fmt.Sprintf("setup does not publish output %q", path[0])
 	}
 	return ""
 }

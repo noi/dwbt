@@ -99,6 +99,44 @@ steps:
 	}
 }
 
+func TestCheckSetupTeardown(t *testing.T) {
+	p := project(t, map[string]string{"user/create": userCreate})
+	wf := workflow(t, `
+setup:
+  steps:
+    - id: alice
+      use: user/create
+      params: { name: alice, age: 20 }
+      outputs:
+        user: <<outputs.current.user>>
+    # Step ids of the setup do not conflict with those of the steps.
+    - id: created
+      use: http
+      params: { server: api, method: GET, path: / }
+      outputs:
+        res: <<outputs.current.res>>
+  outputs:
+    user: <<outputs.steps.alice.user>>
+inputs:
+  user: <<outputs.setup.user>>
+  home: <<env.HOME>>
+steps:
+  - id: created
+    use: http
+    params: { server: api, method: GET, path: /api/users/<<inputs.user.id>> }
+    outputs:
+      body: <<outputs.current.res.body>>
+teardown:
+  - use: http
+    inputs:
+      body: <<outputs.created.body>>
+    params: { server: api, method: DELETE, path: /api/users/<<inputs.user.id>>/<<inputs.body.id>> }
+`)
+	if err := Check(p, presets, []*def.Workflow{wf}); err != nil {
+		t.Fatalf("unexpected errors:\n%s", joinErrs(err))
+	}
+}
+
 func TestCheckErrors(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -152,7 +190,7 @@ steps:
 				`wf.yaml:20:13: inputs.zzz: undeclared input "zzz"`,
 				`wf.yaml:20:13: foo: unknown variable "foo"`,
 				`wf.yaml:23:13: outputs.current.nope: the action does not publish output "nope"`,
-				`wf.yaml:24:13: outputs: outputs must be followed by current, steps or a step id`,
+				`wf.yaml:24:13: outputs: outputs must be followed by current, steps, setup or a step id`,
 			},
 		},
 		{
@@ -200,8 +238,68 @@ steps:
 				`wf.yaml:17:9: step id "current" is reserved`,
 				`wf.yaml:23:9: duplicate step id "dup"`,
 				`wf.yaml:26:9: step id "steps" is reserved`,
-				`wf.yaml:28:47: outputs.steps.dup: outputs.steps is only available in action outputs`,
+				`wf.yaml:28:47: outputs.steps.dup: outputs.steps is only available in action and setup outputs`,
 			},
+		},
+		{
+			name: "setup and teardown",
+			wf: `
+setup:
+  steps:
+    - id: a
+      use: http
+      params: { server: api, method: GET, path: /<<inputs.user>> }
+      outputs:
+        res: <<outputs.current.res>>
+  outputs:
+    res: <<outputs.steps.a.res>>
+    x: <<outputs.a.res>>
+    y: <<outputs.setup.res>>
+inputs:
+  res: <<outputs.setup.res>>
+  nope: <<outputs.setup.nope>>
+  step: <<outputs.a.res>>
+  in: <<inputs.res>>
+steps:
+  - id: setup
+    use: http
+    inputs:
+      res: <<outputs.setup.res>>
+    params: { server: api, method: GET, path: /<<inputs.res.status>> }
+  - id: b
+    use: http
+    params: { server: api, method: GET, path: /<<inputs.step>> }
+    outputs:
+      res: <<outputs.current.res>>
+teardown:
+  - id: b
+    use: http
+    params: { server: api, method: GET, path: /<<outputs.steps.b.res>> }
+`,
+			want: []string{
+				`wf.yaml:6:49: inputs.user: undeclared input "user"`,
+				`wf.yaml:11:8: outputs.a.res: outputs of other steps can only be received via inputs`,
+				`wf.yaml:12:8: outputs.setup.res: outputs.setup is only available in workflow inputs`,
+				`wf.yaml:15:9: outputs.setup.nope: setup does not publish output "nope"`,
+				`wf.yaml:16:9: outputs.a.res: workflow inputs can only receive the outputs of the setup`,
+				`wf.yaml:17:7: inputs.res: inputs cannot be referenced in workflow inputs`,
+				`wf.yaml:22:7: input "res" is already defined by the workflow`,
+				`wf.yaml:22:12: outputs.setup.res: outputs.setup is only available in workflow inputs`,
+				`wf.yaml:19:9: step id "setup" is reserved`,
+				`wf.yaml:32:47: outputs.steps.b.res: outputs.steps is only available in action and setup outputs`,
+				`wf.yaml:30:9: duplicate step id "b"`,
+			},
+		},
+		{
+			name: "no setup",
+			wf: `
+inputs:
+  res: <<outputs.setup.res>>
+steps:
+  - use: http
+    params: { server: api, method: GET, path: / }
+`,
+			want: []string{`wf.yaml:3:8: outputs.setup.res: the workflow has no setup`},
 		},
 		{
 			name: "action definitions",
@@ -239,9 +337,9 @@ steps:
 				`actions call each other in a cycle: a -> b -> a`,
 				`c.yaml:7:45: params.y: undeclared parameter "y"`,
 				`c.yaml:11:6: outputs.steps.s.w: step "s" does not publish output "w"`,
-				`c.yaml:12:6: outputs.steps.t: the action has no step with id "t" and outputs`,
+				`c.yaml:12:6: outputs.steps.t: no step with id "t" and outputs in steps`,
 				`c.yaml:13:6: outputs.s.v: outputs of other steps can only be received via inputs`,
-				`c.yaml:14:6: outputs.current.s.v: outputs.current is not available in action outputs; use outputs.steps.<id> for the outputs of the action's steps`,
+				`c.yaml:14:6: outputs.current.s.v: outputs.current is not available in action outputs; use outputs.steps.<id> for the outputs of the steps`,
 				`wf.yaml:3:3: action "a" is already defined in the actions directory`,
 				`wf.yaml:5:3: actions call each other in a cycle: local -> local`,
 			},

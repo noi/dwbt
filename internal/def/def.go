@@ -22,7 +22,22 @@ type Workflow struct {
 	Description string
 	// Actions are the actions defined in the workflow file.
 	Actions map[string]*ActionDef
+	// Setup runs before Steps; nil if the workflow has none.
+	Setup *Setup
+	// Inputs receive the outputs of Setup, and are available as inputs to
+	// every step of Steps and Teardown.
+	Inputs []*Binding
+	Steps  []*Step
+	// Teardown runs after Steps, even if a step fails.
+	Teardown []*Step
+}
+
+// Setup prepares the data of a workflow. Like a user-defined action, its
+// outputs receive the outputs of its steps through outputs.steps.
+type Setup struct {
+	Pos     yamlx.Pos
 	Steps   []*Step
+	Outputs []*Binding
 }
 
 // ActionDef is a user-defined action.
