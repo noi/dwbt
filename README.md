@@ -1,4 +1,9 @@
-# dwbt
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-wordmark-dark.svg">
+    <img src="assets/logo-wordmark.svg" alt="dwbt" width="290">
+  </picture>
+</h1>
 
 **D**efined **W**orkflow **B**ased **T**ests — pronounced "doubt" (ダウト)
 
