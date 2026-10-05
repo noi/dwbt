@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -131,5 +134,56 @@ func TestRunTextBodyAndErrors(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "unknown server") {
 		t.Errorf("unknown server: err = %v", err)
+	}
+}
+
+func TestRunUnixSocket(t *testing.T) {
+	// t.TempDir can exceed the length limit of socket paths on macOS.
+	dir, err := os.MkdirTemp("", "dwbt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "api.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, r.Host+" "+r.URL.RequestURI())
+	}))
+	srv.Listener = ln
+	srv.Start()
+	defer srv.Close()
+
+	t.Chdir(dir)
+	a := New()
+	for _, base := range []string{"unix://" + socket, "unix:" + socket, "unix:api.sock"} {
+		rt := runtime{servers: map[string]string{"api": base}, timeout: 5 * time.Second}
+		out, err := a.Run(context.Background(), rt, map[string]any{
+			"server": "api", "method": "GET", "path": "/users", "query": map[string]any{"q": "a"},
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", base, err)
+		}
+		res := out["res"].(map[string]any)
+		if res["status"] != 200 || res["body"] != "localhost /users?q=a" {
+			t.Errorf("%s: res = %#v", base, res)
+		}
+	}
+
+	for base, want := range map[string]string{
+		"unix://host/x.sock":           "invalid URL",
+		"unix:":                        "no socket path",
+		"unix:///":                     "no socket path",
+		"unix://" + dir + "/none.sock": "via unix:" + dir + "/none.sock",
+	} {
+		rt := runtime{servers: map[string]string{"api": base}, timeout: 5 * time.Second}
+		_, err := a.Run(context.Background(), rt, map[string]any{
+			"server": "api", "method": "GET", "path": "/",
+		})
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", base, err, want)
+		}
 	}
 }
