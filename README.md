@@ -91,6 +91,8 @@ func TestE2E(t *testing.T) {
 
 `New` takes the path to a `.dwbt` directory. It validates the definitions and then runs each workflow as a subtest, so you can select workflows with `go test -run TestE2E/follow.yaml`. Each method returns a new value without modifying its receiver, so you can share common settings across multiple tests.
 
+`Parallel(n)` runs up to `n` workflows at the same time, like `--parallel` of the dwbt command. `Run` still returns after all the workflows finish, so a server closed by `defer` stays available to them.
+
 ## License
 
 [MIT](LICENSE)

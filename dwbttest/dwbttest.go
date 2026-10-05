@@ -13,6 +13,9 @@
 // Each workflow runs as a subtest named after its path under the workflows
 // directory, so a single workflow can be selected with
 // go test -run TestE2E/follow.yaml.
+//
+// Workflows run one by one by default; see Suite.Parallel to run them at
+// the same time.
 package dwbttest
 
 import (
@@ -22,9 +25,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/noi/dwbt/action"
+	"github.com/noi/dwbt/internal/def"
 	"github.com/noi/dwbt/internal/engine"
 	"github.com/noi/dwbt/internal/runner"
 )
@@ -38,13 +43,14 @@ type Suite struct {
 	servers   map[string]string
 	actions   engine.Actions
 	workflows []string
+	parallel  int
 }
 
 // New returns a Suite running the workflows of the .dwbt directory dir,
 // such as "testdata/.dwbt". Unlike the dwbt command, it does not search the
 // parent directories.
 func New(dir string) Suite {
-	return Suite{dir: dir, actions: engine.Builtin()}
+	return Suite{dir: dir, actions: engine.Builtin(), parallel: 1}
 }
 
 // Server overrides the URL of the server id, like --server id=url of the dwbt
@@ -82,10 +88,22 @@ func (s Suite) Workflows(paths ...string) Suite {
 	return s
 }
 
+// Parallel runs up to n workflows at the same time, like --parallel of the
+// dwbt command. Run still returns after all the workflows finish, so a
+// server closed by a deferred call stays available to them. The subtests do
+// not call t.Parallel, so the -parallel flag of go test does not apply.
+func (s Suite) Parallel(n int) Suite {
+	s.parallel = n
+	return s
+}
+
 // Run validates the definitions and runs each workflow as a subtest of t.
 // Invalid definitions fail t without running any workflow.
 func (s Suite) Run(t *testing.T) {
 	t.Helper()
+	if s.parallel < 1 {
+		t.Fatalf("Parallel(%d): n must be at least 1", s.parallel)
+	}
 	actions, err := s.actions.Map()
 	if err != nil {
 		fatal(t, err)
@@ -134,27 +152,41 @@ func (s Suite) Run(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Subtests are started from goroutines rather than with t.Parallel, so
+	// that Run returns after they finish.
+	sem := make(chan struct{}, s.parallel)
+	var wg sync.WaitGroup
 	for _, wf := range plan.Workflows {
 		name := wf.Name
 		if rel, err := filepath.Rel(wfDir, wf.Path); err == nil && !strings.HasPrefix(rel, "..") {
 			name = filepath.ToSlash(rel)
 		}
-		t.Run(name, func(t *testing.T) {
-			res := r.Run(t.Context(), wf)
-			title := wf.Name
-			if wf.Description != "" {
-				title += " - " + wf.Description
-			}
-			var b strings.Builder
-			fmt.Fprintf(&b, "%s %s (%s)\n", res.Status, title, engine.Duration(res.Duration))
-			engine.WriteSteps(&b, res)
-			msg := strings.TrimSuffix(b.String(), "\n")
-			if res.Status == runner.Passed {
-				t.Log(msg)
-			} else {
-				t.Error(msg)
-			}
-		})
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			t.Run(name, func(t *testing.T) { runWorkflow(t, r, wf) })
+		}()
+	}
+	wg.Wait()
+}
+
+// runWorkflow runs wf and reports its result to t.
+func runWorkflow(t *testing.T, r *runner.Runner, wf *def.Workflow) {
+	res := r.Run(t.Context(), wf)
+	title := wf.Name
+	if wf.Description != "" {
+		title += " - " + wf.Description
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s (%s)\n", res.Status, title, engine.Duration(res.Duration))
+	engine.WriteSteps(&b, res)
+	msg := strings.TrimSuffix(b.String(), "\n")
+	if res.Status == runner.Passed {
+		t.Log(msg)
+	} else {
+		t.Error(msg)
 	}
 }
 
