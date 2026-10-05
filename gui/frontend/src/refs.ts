@@ -37,7 +37,12 @@ export function refsFor(scope: Scope, index: number, field: Field): RefGroup[] {
     groups.push({ label: 'アクションのパラメータ', refs: scope.params.map((p) => ({ expr: `params.${p}` })) })
   }
   if (field === 'actionOutputs') {
-    groups.push({ label: 'ステップの出力', refs: published(scope.steps, scope.steps.length) })
+    // Action outputs receive the outputs of the action's steps through
+    // outputs.current, not via inputs.
+    const refs = published(scope.steps, scope.steps.length).map((r) => ({
+      expr: `outputs.current.${r.via!.step}.${r.via!.output}`,
+    }))
+    groups.push({ label: 'ステップの出力', refs })
     return groups.filter((g) => g.refs.length > 0)
   }
 
