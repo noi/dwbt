@@ -28,6 +28,15 @@ dwbt run      [workflow...] [--env <name>] [--server <id>=<url>]...
     follow.yaml
 ```
 
+サーバーの URL には `http://` / `https://` の URL のほか、Unix ドメインソケットのパスを `unix:///path/to/app.sock`（絶対パス）または `unix:app.sock`（カレントディレクトリからの相対パス）の形式で指定できます。
+
+```yaml
+environments:
+  local:
+    servers:
+      api: unix:///tmp/app.sock
+```
+
 終了コードは、成功が `0`、`expects` の不一致が `1`、それ以外のエラーが `2` です。
 
 [examples/users](examples/users) にサンプルがあります。

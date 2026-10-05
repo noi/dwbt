@@ -53,7 +53,8 @@ type ParamSpec map[string]Param
 
 // Runtime gives actions access to the execution environment.
 type Runtime interface {
-	// Server returns the base URL of the server with the given id.
+	// Server returns the base URL of the server with the given id, which may
+	// be a unix: URL of a Unix domain socket; see httpaction.Action.
 	Server(id string) (string, error)
 	// HTTPTimeout returns the timeout for a single HTTP request.
 	HTTPTimeout() time.Duration
