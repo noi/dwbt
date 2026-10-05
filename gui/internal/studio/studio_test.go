@@ -2,6 +2,7 @@ package studio
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -82,6 +83,26 @@ func TestCheckWorkflow(t *testing.T) {
 		if p.Step != 2 {
 			t.Errorf("got %+v", p)
 		}
+	}
+}
+
+func TestCheckWorkflowSections(t *testing.T) {
+	s, _ := open(t)
+	http := func(path string) *doc.Step {
+		return &doc.Step{Use: "http", Params: []*doc.Binding{{Name: "server", Value: "api"}, {Name: "method", Value: "GET"}, {Name: "path", Value: path}}}
+	}
+	wf := &doc.Workflow{
+		Setup:    &doc.Setup{Steps: []*doc.Step{http("/"), {Use: "nope"}}},
+		Inputs:   []*doc.Binding{{Name: "x", Value: "1"}},
+		Steps:    []*doc.Step{http("/<<inputs.y>>")},
+		Teardown: []*doc.Step{http("/"), http("/<<inputs.z>>")},
+	}
+	var got []string
+	for _, p := range s.CheckWorkflow("new.yaml", wf) {
+		got = append(got, fmt.Sprintf("%s %d", p.Section, p.Step))
+	}
+	if want := []string{"setup 1", "steps 0", "teardown 1"}; !slices.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 

@@ -37,11 +37,24 @@ export interface Action {
   outputs: Binding[]
 }
 
+export interface Setup {
+  steps: Step[]
+  outputs: Binding[]
+}
+
 export interface Workflow {
   description: string
   actions: Action[]
+  /** null if the workflow has no setup. */
+  setup: Setup | null
+  inputs: Binding[]
   steps: Step[]
+  teardown: Step[]
 }
+
+/** A list of steps of a workflow. Actions only have "steps". */
+export type Section = 'setup' | 'steps' | 'teardown'
+
 
 export interface ParamInfo {
   name: string
@@ -64,6 +77,8 @@ export interface Problem {
   message: string
   file: string
   line: number
+  /** The section of the step the problem is in, or "" if it is in none. */
+  section: string
   step: number
 }
 
@@ -79,6 +94,7 @@ export interface Project {
 }
 
 export interface StepResult {
+  section: Section
   index: number
   label: string
   status: string
@@ -90,6 +106,8 @@ export interface RunResult {
   status: string
   duration: string
   steps: StepResult[]
+  /** An error in the outputs of the setup or the inputs of the workflow. */
+  error: string
   problems: Problem[]
 }
 
@@ -114,7 +132,7 @@ export function emptyAction(name = ''): Action {
 }
 
 export function emptyWorkflow(): Workflow {
-  return { description: '', actions: [], steps: [] }
+  return { description: '', actions: [], setup: null, inputs: [], steps: [], teardown: [] }
 }
 
 // The Go side encodes empty slices of some values as null; normalize them so
@@ -144,7 +162,14 @@ export function normAction(a: Action): Action {
 }
 
 export function normWorkflow(w: Workflow): Workflow {
-  return { description: w.description ?? '', actions: (w.actions ?? []).map(normAction), steps: normSteps(w.steps) }
+  return {
+    description: w.description ?? '',
+    actions: (w.actions ?? []).map(normAction),
+    setup: w.setup ? { steps: normSteps(w.setup.steps), outputs: w.setup.outputs ?? [] } : null,
+    inputs: w.inputs ?? [],
+    steps: normSteps(w.steps),
+    teardown: normSteps(w.teardown),
+  }
 }
 
 export function normProject(p: Project): Project {

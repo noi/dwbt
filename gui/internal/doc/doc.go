@@ -23,7 +23,17 @@ type Workflow struct {
 	Description string `json:"description"`
 	// Actions are the actions local to the workflow file.
 	Actions []*Action `json:"actions"`
-	Steps   []*Step   `json:"steps"`
+	// Setup is nil if the workflow has no setup.
+	Setup    *Setup     `json:"setup"`
+	Inputs   []*Binding `json:"inputs"`
+	Steps    []*Step    `json:"steps"`
+	Teardown []*Step    `json:"teardown"`
+}
+
+// Setup is the setup of a workflow.
+type Setup struct {
+	Steps   []*Step    `json:"steps"`
+	Outputs []*Binding `json:"outputs"`
 }
 
 // Action is a user-defined action.
@@ -74,7 +84,7 @@ func ParseWorkflow(data []byte) (*Workflow, error) {
 	if err != nil {
 		return nil, err
 	}
-	wf := &Workflow{Actions: []*Action{}, Steps: []*Step{}}
+	wf := &Workflow{Actions: []*Action{}, Inputs: []*Binding{}, Steps: []*Step{}, Teardown: []*Step{}}
 	err = fields(n, "workflow", map[string]func(*yaml.Node) error{
 		"description": func(v *yaml.Node) (err error) {
 			wf.Description, err = str(v, "description")
@@ -94,8 +104,29 @@ func ParseWorkflow(data []byte) (*Workflow, error) {
 			}
 			return nil
 		},
+		"setup": func(v *yaml.Node) error {
+			wf.Setup = &Setup{Steps: []*Step{}, Outputs: []*Binding{}}
+			return fields(v, "setup", map[string]func(*yaml.Node) error{
+				"steps": func(v *yaml.Node) (err error) {
+					wf.Setup.Steps, err = steps(v)
+					return err
+				},
+				"outputs": func(v *yaml.Node) (err error) {
+					wf.Setup.Outputs, err = bindings(v, "outputs")
+					return err
+				},
+			})
+		},
+		"inputs": func(v *yaml.Node) (err error) {
+			wf.Inputs, err = bindings(v, "inputs")
+			return err
+		},
 		"steps": func(v *yaml.Node) (err error) {
 			wf.Steps, err = steps(v)
+			return err
+		},
+		"teardown": func(v *yaml.Node) (err error) {
+			wf.Teardown, err = steps(v)
 			return err
 		},
 	})
@@ -331,11 +362,33 @@ func EncodeWorkflow(wf *Workflow) ([]byte, error) {
 		}
 		m.add("actions", actions.node())
 	}
+	if wf.Setup != nil {
+		setup := &mapping{}
+		s, err := stepsNode(wf.Setup.Steps)
+		if err != nil {
+			return nil, fmt.Errorf("setup: %w", err)
+		}
+		setup.add("steps", s)
+		if err := setup.bindings("outputs", wf.Setup.Outputs); err != nil {
+			return nil, fmt.Errorf("setup: %w", err)
+		}
+		m.add("setup", setup.node())
+	}
+	if err := m.bindings("inputs", wf.Inputs); err != nil {
+		return nil, err
+	}
 	s, err := stepsNode(wf.Steps)
 	if err != nil {
 		return nil, err
 	}
 	m.add("steps", s)
+	if len(wf.Teardown) > 0 {
+		t, err := stepsNode(wf.Teardown)
+		if err != nil {
+			return nil, fmt.Errorf("teardown: %w", err)
+		}
+		m.add("teardown", t)
+	}
 	b, err := encode(m.node())
 	if err != nil {
 		return nil, err
@@ -484,16 +537,29 @@ func encode(n *yaml.Node) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// separateSteps inserts a blank line between the top-level steps, as they
-// are usually written by hand.
+// separateSteps inserts a blank line between the top-level steps, the
+// steps of the setup and those of the teardown, as they are usually written
+// by hand.
 func separateSteps(b []byte) []byte {
 	lines := strings.SplitAfter(string(b), "\n")
 	var out []string
-	inSteps := false
+	// item is the prefix of the steps of the current list, if any.
+	item := ""
+	inSetup := false
 	for _, l := range lines {
-		if !strings.HasPrefix(l, " ") {
-			inSteps = l == "steps:\n"
-		} else if inSteps && strings.HasPrefix(l, "  - ") && !strings.HasSuffix(out[len(out)-1], "steps:\n") {
+		switch {
+		case !strings.HasPrefix(l, " "):
+			inSetup = l == "setup:\n"
+			item = ""
+			if l == "steps:\n" || l == "teardown:\n" {
+				item = "  - "
+			}
+		case inSetup && !strings.HasPrefix(l, "   "):
+			item = ""
+			if l == "  steps:\n" {
+				item = "    - "
+			}
+		case item != "" && strings.HasPrefix(l, item) && !strings.HasSuffix(out[len(out)-1], "steps:\n") && !strings.HasSuffix(out[len(out)-1], "teardown:\n"):
 			out = append(out, "\n")
 		}
 		out = append(out, l)
