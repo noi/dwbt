@@ -66,7 +66,7 @@ func (p *parser) seq(n *yamlx.Node, what string) []*yamlx.Node {
 func ParseWorkflow(n *yamlx.Node, name string) (*Workflow, error) {
 	p := &parser{}
 	wf := &Workflow{Name: name, Actions: map[string]*ActionDef{}}
-	if !p.mapping(n, "workflow", "description", "actions", "steps") {
+	if !p.mapping(n, "workflow", "description", "actions", "setup", "inputs", "steps", "teardown") {
 		return nil, p.errs
 	}
 	if d := n.Get("description"); d != nil {
@@ -83,11 +83,22 @@ func ParseWorkflow(n *yamlx.Node, name string) (*Workflow, error) {
 			wf.Actions[pair.Key] = def
 		}
 	}
+	if s := n.Get("setup"); s != nil && p.mapping(s, "setup", "steps", "outputs") {
+		wf.Setup = &Setup{Pos: s.Pos}
+		steps := s.Get("steps")
+		if steps == nil {
+			p.errorf(s.Pos, "setup must have steps")
+		}
+		wf.Setup.Steps = p.steps(steps, "steps")
+		wf.Setup.Outputs = p.bindings(s.Get("outputs"), "outputs")
+	}
+	wf.Inputs = p.bindings(n.Get("inputs"), "inputs")
 	steps := n.Get("steps")
 	if steps == nil {
 		p.errorf(n.Pos, "workflow must have steps")
 	}
-	wf.Steps = p.steps(steps)
+	wf.Steps = p.steps(steps, "steps")
+	wf.Teardown = p.steps(n.Get("teardown"), "teardown")
 	return wf, p.errs.Err()
 }
 
@@ -127,14 +138,14 @@ func (p *parser) action(n *yamlx.Node, name string, pos yamlx.Pos) *ActionDef {
 	if steps == nil {
 		p.errorf(n.Pos, "action %s must have steps", name)
 	}
-	def.Steps = p.steps(steps)
+	def.Steps = p.steps(steps, "steps")
 	def.Outputs = p.bindings(n.Get("outputs"), "outputs")
 	return def
 }
 
-func (p *parser) steps(n *yamlx.Node) []*Step {
+func (p *parser) steps(n *yamlx.Node, what string) []*Step {
 	var steps []*Step
-	for i, item := range p.seq(n, "steps") {
+	for i, item := range p.seq(n, what) {
 		if s := p.step(item, i); s != nil {
 			steps = append(steps, s)
 		}

@@ -129,6 +129,33 @@ steps:
 			},
 		},
 		{
+			name: "setup and teardown",
+			files: map[string]string{
+				".dwbt/workflows/a.yaml": `
+setup:
+  steps:
+    - use: http
+      params: { server: api, method: GET, path: /api/users/1/followers }
+      expects:
+        - status: 200
+steps:
+  - use: http
+    params: { server: api, method: GET, path: / }
+teardown:
+  - use: http
+    params: { server: api, method: GET, path: / }
+`,
+			},
+			args: []string{"run"},
+			code: ExitFailure,
+			stdout: []string{
+				"  FAIL  setup: #1 (http)",
+				"  skip  #1 (http)",
+				"  ok    teardown: #1 (http)",
+				"0 passed, 1 failed, 0 errored",
+			},
+		},
+		{
 			name: "timeout",
 			files: map[string]string{
 				".dwbt/workflows/a.yaml": "steps:\n  - use: http\n    params: { server: api, method: GET, path: /slow }\n",

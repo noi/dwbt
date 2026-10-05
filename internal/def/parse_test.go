@@ -77,6 +77,37 @@ steps:
 	}
 }
 
+func TestParseSetupTeardown(t *testing.T) {
+	wf, err := parseWorkflow(t, `
+setup:
+  steps:
+    - id: create
+      use: http
+      params: { server: api, method: POST, path: /api/users }
+      outputs:
+        user: <<outputs.current.res.body>>
+  outputs:
+    user: <<outputs.steps.create.user>>
+inputs:
+  user: <<outputs.setup.user>>
+steps:
+  - use: http
+    params: { server: api, method: GET, path: /api/users/<<inputs.user.id>> }
+teardown:
+  - use: http
+    params: { server: api, method: DELETE, path: /api/users/<<inputs.user.id>> }
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Setup == nil || len(wf.Setup.Steps) != 1 || len(wf.Setup.Outputs) != 1 {
+		t.Fatalf("unexpected setup: %+v", wf.Setup)
+	}
+	if len(wf.Inputs) != 1 || wf.Inputs[0].Name != "user" || len(wf.Steps) != 1 || len(wf.Teardown) != 1 {
+		t.Errorf("unexpected workflow: %+v", wf)
+	}
+}
+
 func TestParseWorkflowErrors(t *testing.T) {
 	_, err := parseWorkflow(t, `
 steps:
@@ -92,6 +123,10 @@ steps:
     outputs:
       bad-name: 1
   - params: {}
+setup:
+  outputs: {}
+  extra: 1
+teardown: {}
 `)
 	errs, ok := err.(Errors)
 	if !ok {
@@ -111,6 +146,9 @@ steps:
 		`wf.yaml:11:13: invalid expression "1 +"`,
 		`wf.yaml:13:7: invalid outputs name "bad-name"`,
 		`wf.yaml:14:5: step must have use`,
+		`wf.yaml:16:3: setup must have steps`,
+		`wf.yaml:17:3: unknown key "extra" in setup (allowed: steps, outputs)`,
+		`wf.yaml:18:11: teardown must be a sequence, got mapping`,
 	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("missing error %q in:\n%s", want, all)
