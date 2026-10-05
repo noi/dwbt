@@ -37,6 +37,10 @@ go run ../../cmd/dwbt run --server api=http://127.0.0.1:18080
 
 # ci プロファイルは環境変数 API_URL から接続先を読みます
 API_URL=http://127.0.0.1:18080 go run ../../cmd/dwbt run --env ci
+
+# Unix ドメインソケットで待ち受けます
+go run ./server -unix /tmp/users.sock
+go run ../../cmd/dwbt run --server api=unix:///tmp/users.sock
 ```
 
 ### 定義の検証だけ行う
