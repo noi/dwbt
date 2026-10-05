@@ -46,6 +46,10 @@ The exit code is `0` on success, `1` when `expects` do not match, and `2` for an
 
 See [examples/users](examples/users) for an example.
 
+## GUI
+
+[gui](gui) provides a desktop app to create, edit and run workflows visually.
+
 ## Extending actions in Go
 
 You can use dwbt as a library to build a binary with actions implemented in Go.
