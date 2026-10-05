@@ -9,6 +9,7 @@
 | `.dwbt/workflows/` | ワークフロー |
 | `mockapi/` | テスト対象のモック API の実装 |
 | `server/` | モック API を起動するコマンド |
+| `users_test.go` | `dwbttest` でワークフローを実行するテスト |
 
 ## 実行方法
 
@@ -42,4 +43,13 @@ API_URL=http://127.0.0.1:18080 go run ../../cmd/dwbt run --env ci
 
 ```sh
 go run ../../cmd/dwbt validate
+```
+
+### Go のテストから実行する
+
+`users_test.go` は、モック API を `httptest` で起動し、`dwbttest` でワークフローを実行します。サーバーを別に起動する必要はありません。
+
+```sh
+go test .
+go test . -run TestWorkflows/follow.yaml -v
 ```
