@@ -2,6 +2,7 @@ package dwbttest_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/noi/dwbt/action"
 	"github.com/noi/dwbt/dwbttest"
@@ -42,6 +44,36 @@ func (r record) values() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return slices.Clone(*r.vals)
+}
+
+// barrier is an action implemented in Go whose calls wait until n of them
+// arrive, so that it succeeds only when called at the same time.
+type barrier struct {
+	n       int
+	mu      sync.Mutex
+	arrived int
+	all     chan struct{}
+}
+
+func newBarrier(n int) *barrier { return &barrier{n: n, all: make(chan struct{})} }
+
+func (*barrier) Params() action.ParamSpec { return action.ParamSpec{} }
+
+func (*barrier) Outputs() []string { return []string{} }
+
+func (b *barrier) Run(ctx context.Context, _ action.Runtime, _ map[string]any) (map[string]any, error) {
+	b.mu.Lock()
+	b.arrived++
+	if b.arrived == b.n {
+		close(b.all)
+	}
+	b.mu.Unlock()
+	select {
+	case <-b.all:
+		return map[string]any{}, nil
+	case <-time.After(2 * time.Second):
+		return nil, errors.New("timed out waiting for the other calls")
+	}
 }
 
 // writeDwbt creates a .dwbt directory with files under a temporary directory
@@ -147,6 +179,22 @@ steps:
 	dwbttest.New(dir).Env("ci").Run(t)
 }
 
+func TestParallel(t *testing.T) {
+	dir := writeDwbt(t, map[string]string{
+		"workflows/a.yaml": "steps:\n  - use: test/barrier\n",
+		"workflows/b.yaml": "steps:\n  - use: test/barrier\n",
+		"workflows/c.yaml": "steps:\n  - use: test/barrier\n",
+	})
+	b := newBarrier(3)
+	dwbttest.New(dir).Action("test/barrier", b).Parallel(3).Run(t)
+	// Run returns after all the workflows finish.
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.arrived != 3 {
+		t.Errorf("arrived %d, want 3", b.arrived)
+	}
+}
+
 // TestReport runs failing suites in a subprocess and checks how they are
 // reported.
 func TestReport(t *testing.T) {
@@ -189,6 +237,11 @@ func TestReport(t *testing.T) {
 				`error: action "http" is already registered`,
 				`error: invalid action name "Bad Name"`,
 			},
+		},
+		{
+			name: "invalid parallel",
+			fail: true,
+			want: []string{"Parallel(0): n must be at least 1"},
 		},
 		{
 			name: "missing directory",
@@ -254,6 +307,11 @@ steps:
 	t.Run("invalid_action", func(t *testing.T) {
 		dir := writeDwbt(t, map[string]string{"workflows/a.yaml": "steps: []\n"})
 		dwbttest.New(dir).Action("http", newRecord()).Action("Bad Name", newRecord()).Run(t)
+		t.Error("not reached")
+	})
+	t.Run("invalid_parallel", func(t *testing.T) {
+		dir := writeDwbt(t, map[string]string{"workflows/a.yaml": "steps: []\n"})
+		dwbttest.New(dir).Parallel(0).Run(t)
 		t.Error("not reached")
 	})
 	t.Run("missing_directory", func(t *testing.T) {
